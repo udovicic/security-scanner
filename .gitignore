@@ -15,6 +15,9 @@ temp/
 cache/
 *.cache
 
+# Built assets (generated during deployment)
+public/build/
+
 # IDE files
 .vscode/
 .idea/
