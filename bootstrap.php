@@ -73,32 +73,8 @@ if (php_sapi_name() === 'cli') {
     set_time_limit($executionTime);
 }
 
-// Register error handler for production
-if (!$config->isDebug()) {
-    set_error_handler(function ($severity, $message, $file, $line) {
-        if (!(error_reporting() & $severity)) {
-            return false;
-        }
-
-        error_log("PHP Error [{$severity}]: {$message} in {$file} on line {$line}");
-
-        if ($severity === E_ERROR || $severity === E_PARSE || $severity === E_CORE_ERROR) {
-            http_response_code(500);
-            echo 'An error occurred. Please check server logs.';
-            exit(1);
-        }
-
-        return true;
-    });
-
-    set_exception_handler(function ($exception) {
-        error_log('Uncaught exception: ' . $exception->getMessage() . ' in ' . $exception->getFile() . ':' . $exception->getLine());
-
-        http_response_code(500);
-        echo 'An error occurred. Please check server logs.';
-        exit(1);
-    });
-}
+// Register comprehensive error handler
+SecurityScanner\Core\ErrorHandler::register($config);
 
 // Return config instance for use by the application
 return $config;
