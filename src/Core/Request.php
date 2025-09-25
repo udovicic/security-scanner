@@ -328,4 +328,20 @@ class Request
     {
         return $this->parameters;
     }
+
+    /**
+     * Get all input data (query + post + json)
+     */
+    public function all(): array
+    {
+        $input = array_merge($this->query, $this->post);
+
+        // If it's a JSON request, merge JSON data
+        $json = $this->getJsonBody();
+        if ($json) {
+            $input = array_merge($input, $json);
+        }
+
+        return $input;
+    }
 }

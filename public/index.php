@@ -47,6 +47,8 @@ use SecurityScanner\Core\Router;
 use SecurityScanner\Core\Request;
 use SecurityScanner\Core\Response;
 use SecurityScanner\Core\ErrorHandler;
+use SecurityScanner\Core\SecurityHeaders;
+use SecurityScanner\Core\SecurityMiddleware;
 
 // Initialize access logging
 $accessLogger = Logger::access();
@@ -74,8 +76,15 @@ try {
     $request = new Request();
     $response = new Response();
 
-    // Set security headers
-    setSecurityHeaders($config, $response);
+    // Apply security middleware
+    $securityMiddleware = new SecurityMiddleware();
+    $securityResponse = $securityMiddleware->handle($request, $response);
+
+    // If security middleware blocked the request, send that response
+    if ($securityResponse !== null) {
+        $securityResponse->send();
+        return;
+    }
 
     // Route the request
     $result = $router->dispatch($request, $response);
@@ -138,49 +147,3 @@ function getClientIp(): string
     return $_SERVER['REMOTE_ADDR'] ?? 'unknown';
 }
 
-/**
- * Set security headers
- */
-function setSecurityHeaders($config, Response $response): void
-{
-    // Prevent clickjacking
-    $response->setHeader('X-Frame-Options', 'DENY');
-
-    // Prevent MIME type sniffing
-    $response->setHeader('X-Content-Type-Options', 'nosniff');
-
-    // Enable XSS protection
-    $response->setHeader('X-XSS-Protection', '1; mode=block');
-
-    // Referrer policy
-    $response->setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
-
-    // Content Security Policy
-    $csp = "default-src 'self'; " .
-           "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " .
-           "style-src 'self' 'unsafe-inline'; " .
-           "img-src 'self' data: https:; " .
-           "font-src 'self'; " .
-           "connect-src 'self'; " .
-           "form-action 'self';";
-
-    $response->setHeader('Content-Security-Policy', $csp);
-
-    // HTTPS enforcement in production
-    if ($config->isProduction()) {
-        // HSTS (HTTP Strict Transport Security)
-        $response->setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
-
-        // Redirect HTTP to HTTPS
-        if (empty($_SERVER['HTTPS']) || $_SERVER['HTTPS'] === 'off') {
-            $httpsUrl = 'https://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'];
-            $response->redirect($httpsUrl, 301);
-            return;
-        }
-    }
-
-    // Prevent caching of sensitive pages by default
-    $response->setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
-    $response->setHeader('Pragma', 'no-cache');
-    $response->setHeader('Expires', '0');
-}

@@ -8,11 +8,13 @@ abstract class AbstractController
     protected Logger $logger;
     protected Request $request;
     protected Response $response;
+    protected Container $container;
     protected array $middleware = [];
 
     public function __construct()
     {
-        $this->config = Config::getInstance();
+        $this->container = Container::getInstance();
+        $this->config = $this->container->get(Config::class);
         $this->logger = Logger::access();
         $this->request = new Request();
         $this->response = new Response();

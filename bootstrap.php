@@ -76,5 +76,15 @@ if (php_sapi_name() === 'cli') {
 // Register comprehensive error handler
 SecurityScanner\Core\ErrorHandler::register($config);
 
+// Initialize dependency injection container
+$container = SecurityScanner\Core\Container::getInstance();
+$container->registerCoreServices();
+
+// Initialize provider manager (for future service providers)
+$providerManager = new SecurityScanner\Core\ProviderManager($container);
+
+// Store container and provider manager in config for global access
+$container->instance('provider.manager', $providerManager);
+
 // Return config instance for use by the application
 return $config;

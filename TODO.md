@@ -11,8 +11,8 @@
 - [x] 8. Create single entry point (public/index.php) with basic bootstrap
 - [x] 9. Setup basic asset management (CSS/JS handling, minification pipeline)
 - [x] 10. Create base abstract classes (AbstractTest, AbstractController, AbstractModel, AbstractService)
-- [ ] 11. Implement dependency injection container with lazy loading
-- [ ] 12. Setup security headers (HSTS, CSP, X-Frame-Options) and HTTPS enforcement
+- [x] 11. Implement dependency injection container with lazy loading
+- [x] 12. Setup security headers (HSTS, CSP, X-Frame-Options) and HTTPS enforcement
 
 ## Phase 2: Database Layer & Migration System
 - [ ] 13. Design database schema (websites, available_tests, website_test_config, test_executions, test_results, scheduler_log)
@@ -167,4 +167,4 @@
 - [ ] 140. Create deployment guide with server requirements
 - [ ] 141. Write architecture decision records for major technical decisions
 
-## Progress: 10/141 tasks completed (7.1%)
+## Progress: 12/141 tasks completed (8.5%)
