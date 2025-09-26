@@ -164,6 +164,9 @@ abstract class AbstractModel
             $data['updated_at'] = date('Y-m-d H:i:s');
         }
 
+        // Prepare data for insertion (handle JSON casting)
+        $data = $this->prepareDataForInsert($data);
+
         $columns = array_keys($data);
         $placeholders = str_repeat('?,', count($columns) - 1) . '?';
 
@@ -470,5 +473,26 @@ abstract class AbstractModel
     protected function rollback(): bool
     {
         return $this->db->getConnection()->rollBack();
+    }
+
+    /**
+     * Prepare data for insertion by handling casts
+     */
+    private function prepareDataForInsert(array $data): array
+    {
+        foreach ($data as $field => $value) {
+            if (isset($this->casts[$field])) {
+                switch ($this->casts[$field]) {
+                    case 'json':
+                        if (is_array($value) || is_object($value)) {
+                            $data[$field] = json_encode($value);
+                        }
+                        break;
+                    // Other cast types can be added here if needed
+                }
+            }
+        }
+
+        return $data;
     }
 }
