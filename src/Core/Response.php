@@ -25,6 +25,15 @@ class Response
     }
 
     /**
+     * Create an HTML response
+     */
+    public static function html(string $content, int $statusCode = 200, array $headers = []): self
+    {
+        $headers = array_merge(['Content-Type' => 'text/html; charset=UTF-8'], $headers);
+        return new self($content, $statusCode, $headers);
+    }
+
+    /**
      * Create a JSON response
      */
     public static function json($data, int $statusCode = 200, array $headers = []): self
