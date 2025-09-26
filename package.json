@@ -1,0 +1,30 @@
+{
+  "name": "security-scanner-frontend",
+  "version": "1.0.0",
+  "description": "Frontend build tools for Security Scanner Tool",
+  "scripts": {
+    "build-css": "tailwindcss -i ./src/assets/css/input.css -o ./public/assets/css/app.css --watch",
+    "build-css-prod": "tailwindcss -i ./src/assets/css/input.css -o ./public/assets/css/app.css --minify",
+    "build-js": "esbuild src/assets/js/app.js --bundle --outfile=public/assets/js/app.js --target=es2020 --format=iife",
+    "build-js-prod": "esbuild src/assets/js/app.js --bundle --outfile=public/assets/js/app.js --target=es2020 --format=iife --minify",
+    "build": "npm run build-css-prod && npm run build-js-prod",
+    "dev": "concurrently \"npm run build-css\" \"npm run build-js -- --watch\"",
+    "lint": "prettier --check src/assets/**/*.{css,js} && eslint src/assets/js/**/*.js"
+  },
+  "devDependencies": {
+    "@tailwindcss/aspect-ratio": "^0.4.2",
+    "@tailwindcss/forms": "^0.5.7",
+    "@tailwindcss/typography": "^0.5.10",
+    "alpinejs": "^3.13.3",
+    "concurrently": "^8.2.2",
+    "esbuild": "^0.19.8",
+    "eslint": "^8.56.0",
+    "prettier": "^3.1.1",
+    "tailwindcss": "^3.3.6"
+  },
+  "browserslist": [
+    "> 1%",
+    "last 2 versions",
+    "not dead"
+  ]
+}
