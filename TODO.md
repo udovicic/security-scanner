@@ -78,15 +78,15 @@
 - [x] 67. Create API documentation endpoints
 
 ## Phase 6: Services Layer & Business Logic
-- [ ] 68. Create WebsiteService with business logic for website management
-- [ ] 69. Create TestService for test configuration and execution management
-- [ ] 70. Implement SchedulerService for automated test execution
-- [ ] 71. Create NotificationService for email/alert generation
-- [ ] 72. Implement MetricsService for performance and success rate tracking
-- [ ] 73. Create ArchiveService for old data cleanup and management
-- [ ] 74. Implement QueueService for high-volume installations
-- [ ] 75. Create BackupService for database backup and restore
-- [ ] 76. Add resource usage monitoring and throttling for scheduler
+- [x] 68. Create WebsiteService with business logic for website management
+- [x] 69. Create TestService for test configuration and execution management
+- [x] 70. Implement SchedulerService for automated test execution
+- [x] 71. Create NotificationService for email/alert generation
+- [x] 72. Implement MetricsService for performance and success rate tracking
+- [x] 73. Create ArchiveService for old data cleanup and management
+- [x] 74. Implement QueueService for high-volume installations
+- [x] 75. Create BackupService for database backup and restore
+- [x] 76. Add resource usage monitoring and throttling for scheduler
 
 ## Phase 7: Background Processing & Scheduler
 - [ ] 77. Create cron script (/cron/scheduler.php) with single-minute execution
@@ -167,4 +167,4 @@
 - [ ] 140. Create deployment guide with server requirements
 - [ ] 141. Write architecture decision records for major technical decisions
 
-## Progress: 66/141 tasks completed (46.8%)
+## Progress: 75/141 tasks completed (53.2%)
