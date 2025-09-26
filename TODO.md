@@ -27,7 +27,7 @@
 - [x] 22. Create WebsiteTestConfig model for test assignments
 - [x] 23. Implement database seeding for initial available tests
 - [x] 24. Create database backup system with encryption
-- [ ] 25. Setup database archival strategy for old test results
+- [x] 25. Setup database archival strategy for old test results
 
 ## Phase 3: Core Framework Components
 - [x] 26. Implement Router class with RESTful routing and parameter extraction
@@ -90,7 +90,7 @@
 
 ## Phase 7: Background Processing & Scheduler
 - [ ] 77. Create cron script (/cron/scheduler.php) with single-minute execution
-- [ ] 78. Implement database locking mechanism to prevent overlapping executions
+- [x] 78. Implement database locking mechanism to prevent overlapping executions
 - [ ] 79. Create batch processing for multiple websites in single cron run
 - [ ] 80. Implement execution monitoring with comprehensive logging
 - [ ] 81. Setup scheduler configuration (configurable intervals per website)
@@ -167,4 +167,4 @@
 - [ ] 140. Create deployment guide with server requirements
 - [ ] 141. Write architecture decision records for major technical decisions
 
-## Progress: 75/141 tasks completed (53.2%)
+## Progress: 77/141 tasks completed (54.6%)

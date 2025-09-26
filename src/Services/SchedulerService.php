@@ -3,6 +3,7 @@
 namespace SecurityScanner\Services;
 
 use SecurityScanner\Core\Database;
+use SecurityScanner\Core\DatabaseLock;
 use SecurityScanner\Services\TestService;
 use SecurityScanner\Services\NotificationService;
 use SecurityScanner\Services\ResourceMonitorService;
@@ -10,15 +11,17 @@ use SecurityScanner\Services\ResourceMonitorService;
 class SchedulerService
 {
     private Database $db;
+    private DatabaseLock $dbLock;
     private TestService $testService;
     private NotificationService $notificationService;
     private ResourceMonitorService $resourceMonitor;
     private array $config;
-    private string $lockFile;
+    private string $lockName;
 
     public function __construct(array $config = [])
     {
         $this->db = Database::getInstance();
+        $this->dbLock = new DatabaseLock();
         $this->testService = new TestService();
         $this->notificationService = new NotificationService();
         $this->resourceMonitor = new ResourceMonitorService();
@@ -31,10 +34,11 @@ class SchedulerService
             'retry_failed_after' => 300, // 5 minutes
             'max_retries' => 3,
             'cleanup_interval' => 86400, // 24 hours
-            'health_check_interval' => 300 // 5 minutes
+            'health_check_interval' => 300, // 5 minutes
+            'lock_timeout' => 3600 // 1 hour lock timeout
         ], $config);
 
-        $this->lockFile = sys_get_temp_dir() . '/security_scanner_scheduler.lock';
+        $this->lockName = 'scheduler_execution';
     }
 
     /**
@@ -42,10 +46,18 @@ class SchedulerService
      */
     public function run(): array
     {
-        if (!$this->acquireLock()) {
+        // Try to acquire database lock with metadata
+        $lockMetadata = [
+            'hostname' => gethostname(),
+            'start_time' => date('Y-m-d H:i:s'),
+            'max_execution_time' => $this->config['max_execution_time']
+        ];
+
+        if (!$this->dbLock->acquire($this->lockName, $this->config['lock_timeout'], $lockMetadata)) {
             return [
                 'success' => false,
-                'message' => 'Another scheduler instance is already running'
+                'message' => 'Another scheduler instance is already running',
+                'lock_info' => $this->dbLock->getLockInfo($this->lockName)
             ];
         }
 
@@ -104,6 +116,9 @@ class SchedulerService
             $batches = array_chunk($websitesDue, $this->config['batch_size']);
 
             foreach ($batches as $batchIndex => $batch) {
+                // Send heartbeat before processing each batch
+                $this->sendHeartbeat();
+
                 $batchResults = $this->processBatch($batch, $batchIndex + 1);
 
                 $results['processed_websites'] += $batchResults['processed'];
@@ -147,7 +162,8 @@ class SchedulerService
             ];
 
         } finally {
-            $this->releaseLock();
+            // Release the database lock
+            $this->dbLock->release($this->lockName);
         }
     }
 
@@ -194,6 +210,11 @@ class SchedulerService
             if (!$this->shouldContinueExecution()) {
                 $results['skipped']++;
                 continue;
+            }
+
+            // Send heartbeat every 5 websites to keep lock alive
+            if ($results['processed'] % 5 === 0) {
+                $this->sendHeartbeat();
             }
 
             $scanResult = $this->executeWebsiteScan($website);
@@ -604,32 +625,34 @@ class SchedulerService
     }
 
     /**
-     * Acquire execution lock
+     * Send heartbeat to keep lock alive during long operations
      */
-    private function acquireLock(): bool
+    private function sendHeartbeat(): bool
     {
-        if (file_exists($this->lockFile)) {
-            $lockTime = filemtime($this->lockFile);
-
-            // If lock is older than max execution time, assume it's stale
-            if ($lockTime < (time() - $this->config['max_execution_time'])) {
-                unlink($this->lockFile);
-            } else {
-                return false;
-            }
-        }
-
-        return file_put_contents($this->lockFile, getmypid()) !== false;
+        return $this->dbLock->heartbeat($this->lockName);
     }
 
     /**
-     * Release execution lock
+     * Extend lock timeout if needed
      */
-    private function releaseLock(): void
+    private function extendLockTimeout(int $additionalSeconds): bool
     {
-        if (file_exists($this->lockFile)) {
-            unlink($this->lockFile);
+        return $this->dbLock->extend($this->lockName, $additionalSeconds);
+    }
+
+    /**
+     * Check if current process owns the lock
+     */
+    private function ownsLock(): bool
+    {
+        $lockInfo = $this->dbLock->getLockInfo($this->lockName);
+        if (!$lockInfo) {
+            return false;
         }
+
+        // Simple ownership check - in production you might want more sophisticated logic
+        return !$this->dbLock->isLocked($this->lockName) ||
+               strpos($lockInfo['owner'], (string)getmypid()) !== false;
     }
 
     /**
