@@ -4,322 +4,447 @@ namespace SecurityScanner\Core;
 
 class Response
 {
+    private string $content = '';
     private int $statusCode = 200;
     private array $headers = [];
-    private string $body = '';
     private array $cookies = [];
-    private bool $sent = false;
 
-    private static array $statusTexts = [
-        200 => 'OK',
-        201 => 'Created',
-        204 => 'No Content',
-        301 => 'Moved Permanently',
-        302 => 'Found',
-        304 => 'Not Modified',
-        400 => 'Bad Request',
-        401 => 'Unauthorized',
-        403 => 'Forbidden',
-        404 => 'Not Found',
-        405 => 'Method Not Allowed',
-        422 => 'Unprocessable Entity',
-        500 => 'Internal Server Error',
-        503 => 'Service Unavailable',
-    ];
-
-    public function setStatusCode(int $code): self
+    public function __construct(string $content = '', int $statusCode = 200, array $headers = [])
     {
-        $this->statusCode = $code;
+        $this->content = $content;
+        $this->statusCode = $statusCode;
+        $this->headers = $headers;
+    }
+
+    /**
+     * Create a new Response instance
+     */
+    public static function create(string $content = '', int $statusCode = 200, array $headers = []): self
+    {
+        return new self($content, $statusCode, $headers);
+    }
+
+    /**
+     * Create a JSON response
+     */
+    public static function json($data, int $statusCode = 200, array $headers = []): self
+    {
+        $headers['Content-Type'] = 'application/json';
+        $content = json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES);
+
+        return new self($content, $statusCode, $headers);
+    }
+
+    /**
+     * Create a redirect response
+     */
+    public static function redirect(string $url, int $statusCode = 302): self
+    {
+        return new self('', $statusCode, ['Location' => $url]);
+    }
+
+    /**
+     * Create an error response
+     */
+    public static function error(string $message, int $statusCode = 500, array $headers = []): self
+    {
+        $data = [
+            'error' => true,
+            'message' => $message,
+            'status_code' => $statusCode
+        ];
+
+        return self::json($data, $statusCode, $headers);
+    }
+
+    /**
+     * Create a validation error response
+     */
+    public static function validationError(array $errors, string $message = 'Validation failed'): self
+    {
+        $data = [
+            'error' => true,
+            'message' => $message,
+            'validation_errors' => $errors,
+            'status_code' => 422
+        ];
+
+        return self::json($data, 422);
+    }
+
+    /**
+     * Create a success response
+     */
+    public static function success($data = null, string $message = null, int $statusCode = 200): self
+    {
+        $response = [
+            'success' => true,
+            'status_code' => $statusCode
+        ];
+
+        if ($message !== null) {
+            $response['message'] = $message;
+        }
+
+        if ($data !== null) {
+            $response['data'] = $data;
+        }
+
+        return self::json($response, $statusCode);
+    }
+
+    /**
+     * Create a not found response
+     */
+    public static function notFound(string $message = 'Not Found'): self
+    {
+        return self::error($message, 404);
+    }
+
+    /**
+     * Create an unauthorized response
+     */
+    public static function unauthorized(string $message = 'Unauthorized'): self
+    {
+        return self::error($message, 401);
+    }
+
+    /**
+     * Create a forbidden response
+     */
+    public static function forbidden(string $message = 'Forbidden'): self
+    {
+        return self::error($message, 403);
+    }
+
+    /**
+     * Create a method not allowed response
+     */
+    public static function methodNotAllowed(string $message = 'Method Not Allowed'): self
+    {
+        return self::error($message, 405);
+    }
+
+    /**
+     * Set response content
+     */
+    public function setContent(string $content): self
+    {
+        $this->content = $content;
         return $this;
     }
 
+    /**
+     * Get response content
+     */
+    public function getContent(): string
+    {
+        return $this->content;
+    }
+
+    /**
+     * Set status code
+     */
+    public function setStatusCode(int $statusCode): self
+    {
+        $this->statusCode = $statusCode;
+        return $this;
+    }
+
+    /**
+     * Get status code
+     */
     public function getStatusCode(): int
     {
         return $this->statusCode;
     }
 
+    /**
+     * Set header
+     */
     public function setHeader(string $name, string $value): self
     {
         $this->headers[$name] = $value;
         return $this;
     }
 
+    /**
+     * Get header
+     */
     public function getHeader(string $name): ?string
     {
         return $this->headers[$name] ?? null;
     }
 
+    /**
+     * Set multiple headers
+     */
+    public function setHeaders(array $headers): self
+    {
+        $this->headers = array_merge($this->headers, $headers);
+        return $this;
+    }
+
+    /**
+     * Get all headers
+     */
     public function getHeaders(): array
     {
         return $this->headers;
     }
 
+    /**
+     * Remove header
+     */
     public function removeHeader(string $name): self
     {
         unset($this->headers[$name]);
         return $this;
     }
 
-    public function setBody(string $body): self
-    {
-        $this->body = $body;
-        return $this;
-    }
-
-    public function getBody(): string
-    {
-        return $this->body;
-    }
-
-    public function appendBody(string $content): self
-    {
-        $this->body .= $content;
-        return $this;
-    }
-
+    /**
+     * Set cookie
+     */
     public function setCookie(
         string $name,
-        string $value,
-        int $expire = 0,
+        string $value = '',
+        int $expires = 0,
         string $path = '/',
         string $domain = '',
         bool $secure = false,
         bool $httpOnly = true,
         string $sameSite = 'Lax'
     ): self {
-        $this->cookies[] = [
-            'name' => $name,
+        $this->cookies[$name] = [
             'value' => $value,
-            'expire' => $expire,
+            'expires' => $expires,
             'path' => $path,
             'domain' => $domain,
             'secure' => $secure,
-            'httpOnly' => $httpOnly,
-            'sameSite' => $sameSite,
+            'httponly' => $httpOnly,
+            'samesite' => $sameSite
         ];
 
         return $this;
     }
 
-    public function json(array $data, int $statusCode = 200): self
+    /**
+     * Get cookies
+     */
+    public function getCookies(): array
     {
-        $this->setStatusCode($statusCode)
-             ->setHeader('Content-Type', 'application/json')
-             ->setBody(json_encode($data, JSON_UNESCAPED_UNICODE | JSON_UNESCAPED_SLASHES));
-
-        return $this;
+        return $this->cookies;
     }
 
-    public function html(string $html, int $statusCode = 200): self
+    /**
+     * Check if response is successful (2xx)
+     */
+    public function isSuccessful(): bool
     {
-        $this->setStatusCode($statusCode)
-             ->setHeader('Content-Type', 'text/html; charset=utf-8')
-             ->setBody($html);
-
-        return $this;
+        return $this->statusCode >= 200 && $this->statusCode < 300;
     }
 
-    public function text(string $text, int $statusCode = 200): self
+    /**
+     * Check if response is a redirect (3xx)
+     */
+    public function isRedirection(): bool
     {
-        $this->setStatusCode($statusCode)
-             ->setHeader('Content-Type', 'text/plain; charset=utf-8')
-             ->setBody($text);
-
-        return $this;
+        return $this->statusCode >= 300 && $this->statusCode < 400;
     }
 
-    public function redirect(string $url, int $statusCode = 302): self
+    /**
+     * Check if response is a client error (4xx)
+     */
+    public function isClientError(): bool
     {
-        $this->setStatusCode($statusCode)
-             ->setHeader('Location', $url);
-
-        return $this;
+        return $this->statusCode >= 400 && $this->statusCode < 500;
     }
 
-    public function error(int $statusCode, string $message = ''): self
+    /**
+     * Check if response is a server error (5xx)
+     */
+    public function isServerError(): bool
     {
-        $statusText = self::$statusTexts[$statusCode] ?? 'Unknown Error';
-
-        if (empty($message)) {
-            $message = $statusText;
-        }
-
-        $this->setStatusCode($statusCode);
-
-        // Check if this is an AJAX request
-        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) &&
-            strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
-
-            $this->json([
-                'error' => true,
-                'message' => $message,
-                'status' => $statusCode,
-            ]);
-        } else {
-            $this->html($this->renderErrorPage($statusCode, $statusText, $message));
-        }
-
-        return $this;
+        return $this->statusCode >= 500 && $this->statusCode < 600;
     }
 
-    public function notFound(string $message = 'Page not found'): self
+    /**
+     * Check if response is JSON
+     */
+    public function isJson(): bool
     {
-        return $this->error(404, $message);
+        $contentType = $this->getHeader('Content-Type') ?? '';
+        return str_contains($contentType, 'application/json');
     }
 
-    public function unauthorized(string $message = 'Unauthorized'): self
-    {
-        return $this->error(401, $message);
-    }
-
-    public function forbidden(string $message = 'Forbidden'): self
-    {
-        return $this->error(403, $message);
-    }
-
-    public function badRequest(string $message = 'Bad request'): self
-    {
-        return $this->error(400, $message);
-    }
-
-    public function validationError(array $errors): self
-    {
-        $this->setStatusCode(422);
-
-        if (!empty($_SERVER['HTTP_X_REQUESTED_WITH']) &&
-            strtolower($_SERVER['HTTP_X_REQUESTED_WITH']) === 'xmlhttprequest') {
-
-            $this->json([
-                'error' => true,
-                'message' => 'Validation failed',
-                'errors' => $errors,
-            ]);
-        } else {
-            // For non-AJAX requests, you might want to redirect back with errors
-            $this->html($this->renderErrorPage(422, 'Validation Error', 'Please check your input and try again.'));
-        }
-
-        return $this;
-    }
-
+    /**
+     * Send response to client
+     */
     public function send(): void
     {
-        if ($this->sent) {
-            return;
-        }
-
-        // Send status line
-        $statusText = self::$statusTexts[$this->statusCode] ?? 'Unknown';
-        header("HTTP/1.1 {$this->statusCode} {$statusText}");
+        // Send status code
+        http_response_code($this->statusCode);
 
         // Send headers
         foreach ($this->headers as $name => $value) {
-            header("{$name}: {$value}");
+            header($name . ': ' . $value, false);
         }
 
         // Send cookies
-        foreach ($this->cookies as $cookie) {
+        foreach ($this->cookies as $name => $cookie) {
             setcookie(
-                $cookie['name'],
+                $name,
                 $cookie['value'],
-                $cookie['expire'],
-                $cookie['path'],
-                $cookie['domain'],
-                $cookie['secure'],
-                $cookie['httpOnly']
-            );
-
-            // Set SameSite attribute (PHP 7.3+)
-            if (version_compare(PHP_VERSION, '7.3.0', '>=')) {
-                $cookieOptions = [
-                    'expires' => $cookie['expire'],
+                [
+                    'expires' => $cookie['expires'],
                     'path' => $cookie['path'],
                     'domain' => $cookie['domain'],
                     'secure' => $cookie['secure'],
-                    'httponly' => $cookie['httpOnly'],
-                    'samesite' => $cookie['sameSite'],
-                ];
-
-                setcookie($cookie['name'], $cookie['value'], $cookieOptions);
-            }
+                    'httponly' => $cookie['httponly'],
+                    'samesite' => $cookie['samesite']
+                ]
+            );
         }
 
-        // Send body
-        echo $this->body;
-
-        $this->sent = true;
+        // Send content
+        echo $this->content;
     }
 
-    public function isSent(): bool
+    /**
+     * Add security headers
+     */
+    public function withSecurityHeaders(): self
     {
-        return $this->sent;
+        $this->setHeaders([
+            'X-Content-Type-Options' => 'nosniff',
+            'X-Frame-Options' => 'DENY',
+            'X-XSS-Protection' => '1; mode=block',
+            'Referrer-Policy' => 'strict-origin-when-cross-origin',
+            'Content-Security-Policy' => "default-src 'self'"
+        ]);
+
+        return $this;
     }
 
-    private function renderErrorPage(int $statusCode, string $statusText, string $message): string
+    /**
+     * Add CORS headers
+     */
+    public function withCors(
+        array $allowedOrigins = ['*'],
+        array $allowedMethods = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+        array $allowedHeaders = ['Content-Type', 'Authorization', 'X-Requested-With']
+    ): self {
+        $this->setHeaders([
+            'Access-Control-Allow-Origin' => implode(', ', $allowedOrigins),
+            'Access-Control-Allow-Methods' => implode(', ', $allowedMethods),
+            'Access-Control-Allow-Headers' => implode(', ', $allowedHeaders),
+            'Access-Control-Max-Age' => '86400' // 24 hours
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Set cache headers
+     */
+    public function withCache(int $maxAge = 3600, bool $public = true): self
     {
-        return "<!DOCTYPE html>
-<html>
-<head>
-    <meta charset='utf-8'>
-    <meta name='viewport' content='width=device-width, initial-scale=1'>
-    <title>{$statusCode} - {$statusText}</title>
-    <style>
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            margin: 0;
-            padding: 50px;
-            background-color: #f8f9fa;
-            color: #333;
-        }
-        .error-container {
-            max-width: 600px;
-            margin: 0 auto;
-            text-align: center;
-            background: white;
-            padding: 40px;
-            border-radius: 8px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-        }
-        .error-code {
-            font-size: 72px;
-            color: #dc3545;
-            margin-bottom: 20px;
-            font-weight: 300;
-        }
-        .error-title {
-            font-size: 28px;
-            color: #495057;
-            margin-bottom: 20px;
-            font-weight: 400;
-        }
-        .error-message {
-            font-size: 16px;
-            color: #6c757d;
-            line-height: 1.5;
-        }
-        .back-link {
-            margin-top: 30px;
-        }
-        .back-link a {
-            color: #007bff;
-            text-decoration: none;
-            font-weight: 500;
-        }
-        .back-link a:hover {
-            text-decoration: underline;
-        }
-    </style>
-</head>
-<body>
-    <div class='error-container'>
-        <div class='error-code'>{$statusCode}</div>
-        <div class='error-title'>{$statusText}</div>
-        <div class='error-message'>{$message}</div>
-        <div class='back-link'>
-            <a href='/'>← Back to Home</a>
-        </div>
-    </div>
-</body>
-</html>";
+        $cacheControl = $public ? 'public' : 'private';
+        $cacheControl .= ', max-age=' . $maxAge;
+
+        $this->setHeaders([
+            'Cache-Control' => $cacheControl,
+            'Expires' => gmdate('D, d M Y H:i:s', time() + $maxAge) . ' GMT'
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Disable caching
+     */
+    public function withoutCache(): self
+    {
+        $this->setHeaders([
+            'Cache-Control' => 'no-cache, no-store, must-revalidate',
+            'Pragma' => 'no-cache',
+            'Expires' => '0'
+        ]);
+
+        return $this;
+    }
+
+    /**
+     * Set content type
+     */
+    public function withContentType(string $contentType, string $charset = 'utf-8'): self
+    {
+        $this->setHeader('Content-Type', $contentType . '; charset=' . $charset);
+        return $this;
+    }
+
+    /**
+     * Convert response to array for debugging
+     */
+    public function toArray(): array
+    {
+        return [
+            'status_code' => $this->statusCode,
+            'headers' => $this->headers,
+            'cookies' => array_keys($this->cookies),
+            'content_length' => strlen($this->content),
+            'is_json' => $this->isJson(),
+            'is_successful' => $this->isSuccessful(),
+            'is_redirect' => $this->isRedirection(),
+            'is_error' => $this->isClientError() || $this->isServerError()
+        ];
+    }
+
+    /**
+     * Get status text for status code
+     */
+    public function getStatusText(): string
+    {
+        $statusTexts = [
+            200 => 'OK',
+            201 => 'Created',
+            202 => 'Accepted',
+            204 => 'No Content',
+            301 => 'Moved Permanently',
+            302 => 'Found',
+            304 => 'Not Modified',
+            400 => 'Bad Request',
+            401 => 'Unauthorized',
+            403 => 'Forbidden',
+            404 => 'Not Found',
+            405 => 'Method Not Allowed',
+            422 => 'Unprocessable Entity',
+            429 => 'Too Many Requests',
+            500 => 'Internal Server Error',
+            502 => 'Bad Gateway',
+            503 => 'Service Unavailable'
+        ];
+
+        return $statusTexts[$this->statusCode] ?? 'Unknown';
+    }
+
+    /**
+     * Clone response with new content
+     */
+    public function withContent(string $content): self
+    {
+        $clone = clone $this;
+        $clone->content = $content;
+        return $clone;
+    }
+
+    /**
+     * Clone response with new status code
+     */
+    public function withStatus(int $statusCode): self
+    {
+        $clone = clone $this;
+        $clone->statusCode = $statusCode;
+        return $clone;
     }
 }

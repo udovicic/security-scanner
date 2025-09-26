@@ -4,69 +4,114 @@ namespace SecurityScanner\Core;
 
 class Request
 {
-    private string $method;
-    private string $uri;
-    private string $path;
     private array $query;
     private array $post;
-    private array $files;
     private array $server;
-    private array $headers;
+    private array $files;
     private array $cookies;
-    private array $parameters = [];
+    private array $headers;
     private ?string $body;
+    private array $attributes = [];
+    private array $routeParams = [];
 
-    public function __construct()
-    {
-        $this->method = strtoupper($_SERVER['REQUEST_METHOD'] ?? 'GET');
-        $this->uri = $_SERVER['REQUEST_URI'] ?? '/';
-        $this->server = $_SERVER;
-
-        // Parse URI to separate path and query
-        $parsedUri = parse_url($this->uri);
-        $this->path = $parsedUri['path'] ?? '/';
-
-        // Parse query string
-        $this->query = [];
-        if (isset($parsedUri['query'])) {
-            parse_str($parsedUri['query'], $this->query);
-        }
-
-        // Get POST data
-        $this->post = $_POST ?? [];
-
-        // Get uploaded files
-        $this->files = $_FILES ?? [];
-
-        // Get cookies
-        $this->cookies = $_COOKIE ?? [];
-
-        // Parse headers
+    public function __construct(
+        array $query = null,
+        array $post = null,
+        array $server = null,
+        array $files = null,
+        array $cookies = null
+    ) {
+        $this->query = $query ?? $_GET;
+        $this->post = $post ?? $_POST;
+        $this->server = $server ?? $_SERVER;
+        $this->files = $files ?? $_FILES;
+        $this->cookies = $cookies ?? $_COOKIE;
         $this->headers = $this->parseHeaders();
-
-        // Get raw body for PUT/PATCH requests
-        $this->body = null;
-        if (in_array($this->method, ['PUT', 'PATCH', 'DELETE'])) {
-            $this->body = file_get_contents('php://input');
-        }
+        $this->body = $this->parseBody();
     }
 
+    /**
+     * Create Request from globals
+     */
+    public static function createFromGlobals(): self
+    {
+        return new self();
+    }
+
+    /**
+     * Get request method
+     */
     public function getMethod(): string
     {
-        return $this->method;
+        return strtoupper($this->server['REQUEST_METHOD'] ?? 'GET');
     }
 
+    /**
+     * Get request URI
+     */
     public function getUri(): string
     {
-        return $this->uri;
+        return $this->server['REQUEST_URI'] ?? '/';
     }
 
+    /**
+     * Get request path
+     */
     public function getPath(): string
     {
-        return $this->path;
+        return parse_url($this->getUri(), PHP_URL_PATH) ?? '/';
     }
 
-    public function getQuery(?string $key = null, $default = null)
+    /**
+     * Get query string
+     */
+    public function getQueryString(): string
+    {
+        return parse_url($this->getUri(), PHP_URL_QUERY) ?? '';
+    }
+
+    /**
+     * Check if request is HTTPS
+     */
+    public function isSecure(): bool
+    {
+        return (
+            (!empty($this->server['HTTPS']) && $this->server['HTTPS'] !== 'off') ||
+            (!empty($this->server['SERVER_PORT']) && $this->server['SERVER_PORT'] == 443) ||
+            (!empty($this->server['HTTP_X_FORWARDED_PROTO']) && $this->server['HTTP_X_FORWARDED_PROTO'] === 'https')
+        );
+    }
+
+    /**
+     * Check if request is AJAX
+     */
+    public function isAjax(): bool
+    {
+        return strtolower($this->getHeader('X-Requested-With', '')) === 'xmlhttprequest';
+    }
+
+    /**
+     * Check if request expects JSON
+     */
+    public function expectsJson(): bool
+    {
+        $accept = $this->getHeader('Accept', '');
+        return str_contains($accept, 'application/json') || str_contains($accept, 'text/json');
+    }
+
+    /**
+     * Check if request content is JSON
+     */
+    public function isJson(): bool
+    {
+        $contentType = $this->getHeader('Content-Type', '');
+        return str_contains($contentType, 'application/json');
+    }
+
+    /**
+     * Get query parameter
+     */
+    public function query(string $key = null, $default = null)
     {
         if ($key === null) {
             return $this->query;
@@ -75,273 +120,340 @@ class Request
         return $this->query[$key] ?? $default;
     }
 
-    public function getPost(?string $key = null, $default = null)
+    /**
+     * Get POST data
+     */
+    public function input(string $key = null, $default = null)
     {
         if ($key === null) {
-            return $this->post;
+            return array_merge($this->post, $this->getJsonInput());
         }
 
-        return $this->post[$key] ?? $default;
+        $input = array_merge($this->post, $this->getJsonInput());
+        return $input[$key] ?? $default;
     }
 
-    public function getInput(?string $key = null, $default = null)
+    /**
+     * Get all input (query + post + json)
+     */
+    public function all(): array
     {
-        // Get from POST first, then query
-        if ($key === null) {
-            return array_merge($this->query, $this->post);
+        return array_merge($this->query, $this->post, $this->getJsonInput());
+    }
+
+    /**
+     * Get cookies data
+     */
+    public function cookies(): array
+    {
+        return $this->cookies;
+    }
+
+    /**
+     * Get only specific input fields
+     */
+    public function only(array $keys): array
+    {
+        $input = $this->all();
+        return array_intersect_key($input, array_flip($keys));
+    }
+
+    /**
+     * Get all input except specific fields
+     */
+    public function except(array $keys): array
+    {
+        $input = $this->all();
+        return array_diff_key($input, array_flip($keys));
+    }
+
+    /**
+     * Check if input has key
+     */
+    public function has(string $key): bool
+    {
+        $input = $this->all();
+        return array_key_exists($key, $input);
+    }
+
+    /**
+     * Check if input has non-empty value
+     */
+    public function filled(string $key): bool
+    {
+        $value = $this->input($key);
+        return $value !== null && $value !== '';
+    }
+
+    /**
+     * Get uploaded file
+     */
+    public function file(string $key): ?UploadedFile
+    {
+        if (!isset($this->files[$key])) {
+            return null;
         }
 
-        return $this->post[$key] ?? $this->query[$key] ?? $default;
-    }
+        $file = $this->files[$key];
 
-    public function getFiles(?string $key = null)
-    {
-        if ($key === null) {
-            return $this->files;
+        if (!isset($file['error']) || $file['error'] !== UPLOAD_ERR_OK) {
+            return null;
         }
 
-        return $this->files[$key] ?? null;
+        return new UploadedFile(
+            $file['tmp_name'],
+            $file['name'],
+            $file['type'],
+            $file['size'],
+            $file['error']
+        );
     }
 
-    public function getHeader(string $name): ?string
+    /**
+     * Get cookie value
+     */
+    public function cookie(string $key, $default = null)
     {
-        $name = strtolower($name);
-        return $this->headers[$name] ?? null;
+        return $this->cookies[$key] ?? $default;
     }
 
+    /**
+     * Get header value
+     */
+    public function getHeader(string $name, $default = null): ?string
+    {
+        return $this->headers[strtolower($name)] ?? $default;
+    }
+
+    /**
+     * Get all headers
+     */
     public function getHeaders(): array
     {
         return $this->headers;
     }
 
-    public function getCookie(string $name, $default = null)
-    {
-        return $this->cookies[$name] ?? $default;
-    }
-
-    public function getCookies(): array
-    {
-        return $this->cookies;
-    }
-
+    /**
+     * Get raw request body
+     */
     public function getBody(): ?string
     {
         return $this->body;
     }
 
-    public function getJsonBody(): ?array
+    /**
+     * Get JSON input as array
+     */
+    public function getJsonInput(): array
     {
-        if ($this->body === null) {
-            return null;
+        if (!$this->isJson() || !$this->body) {
+            return [];
         }
 
         $decoded = json_decode($this->body, true);
-        return json_last_error() === JSON_ERROR_NONE ? $decoded : null;
+        return is_array($decoded) ? $decoded : [];
     }
 
-    public function isPost(): bool
+    /**
+     * Get server variable
+     */
+    public function server(string $key = null, $default = null)
     {
-        return $this->method === 'POST';
+        if ($key === null) {
+            return $this->server;
+        }
+
+        return $this->server[$key] ?? $default;
     }
 
-    public function isGet(): bool
-    {
-        return $this->method === 'GET';
-    }
-
-    public function isPut(): bool
-    {
-        return $this->method === 'PUT';
-    }
-
-    public function isDelete(): bool
-    {
-        return $this->method === 'DELETE';
-    }
-
-    public function isAjax(): bool
-    {
-        return strtolower($this->getHeader('x-requested-with') ?? '') === 'xmlhttprequest';
-    }
-
-    public function isSecure(): bool
-    {
-        return !empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off';
-    }
-
+    /**
+     * Get client IP address
+     */
     public function getClientIp(): string
     {
-        $headers = [
-            'HTTP_CLIENT_IP',
+        $ipKeys = [
             'HTTP_X_FORWARDED_FOR',
-            'HTTP_X_FORWARDED',
-            'HTTP_FORWARDED_FOR',
-            'HTTP_FORWARDED',
-            'REMOTE_ADDR',
+            'HTTP_X_REAL_IP',
+            'HTTP_CLIENT_IP',
+            'REMOTE_ADDR'
         ];
 
-        foreach ($headers as $header) {
-            if (!empty($this->server[$header])) {
-                $ips = explode(',', $this->server[$header]);
-                $ip = trim($ips[0]);
-
+        foreach ($ipKeys as $key) {
+            if (!empty($this->server[$key])) {
+                $ip = trim(explode(',', $this->server[$key])[0]);
                 if (filter_var($ip, FILTER_VALIDATE_IP, FILTER_FLAG_NO_PRIV_RANGE | FILTER_FLAG_NO_RES_RANGE)) {
                     return $ip;
                 }
             }
         }
 
-        return $this->server['REMOTE_ADDR'] ?? 'unknown';
+        return $this->server['REMOTE_ADDR'] ?? '127.0.0.1';
     }
 
+    /**
+     * Get user agent
+     */
     public function getUserAgent(): string
     {
-        return $this->server['HTTP_USER_AGENT'] ?? 'Unknown';
+        return $this->server['HTTP_USER_AGENT'] ?? '';
     }
 
-    public function getReferer(): ?string
+    /**
+     * Get referer
+     */
+    public function getReferer(): string
     {
-        return $this->server['HTTP_REFERER'] ?? null;
+        return $this->server['HTTP_REFERER'] ?? '';
     }
 
-    public function getHost(): string
+    /**
+     * Set route parameters
+     */
+    public function setRouteParams(array $params): void
     {
-        return $this->server['HTTP_HOST'] ?? 'localhost';
+        $this->routeParams = $params;
     }
 
-    public function getScheme(): string
+    /**
+     * Get route parameter
+     */
+    public function route(string $key = null, $default = null)
     {
-        return $this->isSecure() ? 'https' : 'http';
+        if ($key === null) {
+            return $this->routeParams;
+        }
+
+        return $this->routeParams[$key] ?? $default;
     }
 
-    public function getFullUrl(): string
+    /**
+     * Set request attribute
+     */
+    public function setAttribute(string $key, $value): void
     {
-        return $this->getScheme() . '://' . $this->getHost() . $this->getUri();
+        $this->attributes[$key] = $value;
     }
 
+    /**
+     * Get request attribute
+     */
+    public function getAttribute(string $key, $default = null)
+    {
+        return $this->attributes[$key] ?? $default;
+    }
+
+    /**
+     * Validate input against rules
+     */
+    public function validate(array $rules, array $messages = []): array
+    {
+        $validator = new Validator();
+        return $validator->validate($this->all(), $rules, $messages);
+    }
+
+    /**
+     * Parse HTTP headers
+     */
     private function parseHeaders(): array
     {
         $headers = [];
 
         foreach ($this->server as $key => $value) {
-            if (strpos($key, 'HTTP_') === 0) {
+            if (str_starts_with($key, 'HTTP_')) {
                 $headerName = strtolower(str_replace('_', '-', substr($key, 5)));
                 $headers[$headerName] = $value;
+            } elseif (in_array($key, ['CONTENT_TYPE', 'CONTENT_LENGTH'])) {
+                $headerName = strtolower(str_replace('_', '-', $key));
+                $headers[$headerName] = $value;
             }
-        }
-
-        // Add some non-HTTP_ headers that are important
-        if (isset($this->server['CONTENT_TYPE'])) {
-            $headers['content-type'] = $this->server['CONTENT_TYPE'];
-        }
-
-        if (isset($this->server['CONTENT_LENGTH'])) {
-            $headers['content-length'] = $this->server['CONTENT_LENGTH'];
         }
 
         return $headers;
     }
 
-    public function validate(array $rules): array
+    /**
+     * Parse request body
+     */
+    private function parseBody(): ?string
     {
-        $errors = [];
-        $data = $this->getInput();
-
-        foreach ($rules as $field => $fieldRules) {
-            $fieldRules = is_string($fieldRules) ? explode('|', $fieldRules) : $fieldRules;
-            $value = $data[$field] ?? null;
-
-            foreach ($fieldRules as $rule) {
-                $ruleParts = explode(':', $rule, 2);
-                $ruleName = $ruleParts[0];
-                $ruleValue = $ruleParts[1] ?? null;
-
-                if (!$this->validateField($value, $ruleName, $ruleValue)) {
-                    $errors[$field][] = $this->getValidationMessage($field, $ruleName, $ruleValue);
-                }
-            }
-        }
-
-        return $errors;
-    }
-
-    private function validateField($value, string $rule, ?string $parameter = null): bool
-    {
-        switch ($rule) {
-            case 'required':
-                return !empty($value);
-
-            case 'string':
-                return is_string($value);
-
-            case 'integer':
-                return filter_var($value, FILTER_VALIDATE_INT) !== false;
-
-            case 'email':
-                return filter_var($value, FILTER_VALIDATE_EMAIL) !== false;
-
-            case 'url':
-                return filter_var($value, FILTER_VALIDATE_URL) !== false;
-
-            case 'min':
-                return is_numeric($value) ? (int)$value >= (int)$parameter : strlen((string)$value) >= (int)$parameter;
-
-            case 'max':
-                return is_numeric($value) ? (int)$value <= (int)$parameter : strlen((string)$value) <= (int)$parameter;
-
-            case 'in':
-                $allowedValues = explode(',', $parameter);
-                return in_array($value, $allowedValues);
-
-            default:
-                return true;
-        }
-    }
-
-    private function getValidationMessage(string $field, string $rule, ?string $parameter = null): string
-    {
-        $messages = [
-            'required' => "The {$field} field is required.",
-            'string' => "The {$field} field must be a string.",
-            'integer' => "The {$field} field must be an integer.",
-            'email' => "The {$field} field must be a valid email address.",
-            'url' => "The {$field} field must be a valid URL.",
-            'min' => "The {$field} field must be at least {$parameter} characters.",
-            'max' => "The {$field} field must not exceed {$parameter} characters.",
-            'in' => "The {$field} field must be one of: {$parameter}.",
-        ];
-
-        return $messages[$rule] ?? "The {$field} field is invalid.";
-    }
-
-    public function setParameters(array $parameters): void
-    {
-        $this->parameters = $parameters;
-    }
-
-    public function getParameter(string $key, $default = null)
-    {
-        return $this->parameters[$key] ?? $default;
-    }
-
-    public function getParameters(): array
-    {
-        return $this->parameters;
+        return file_get_contents('php://input') ?: null;
     }
 
     /**
-     * Get all input data (query + post + json)
+     * Sanitize input value
      */
-    public function all(): array
+    public function sanitize(string $key, string $filter = 'string')
     {
-        $input = array_merge($this->query, $this->post);
+        $value = $this->input($key);
 
-        // If it's a JSON request, merge JSON data
-        $json = $this->getJsonBody();
-        if ($json) {
-            $input = array_merge($input, $json);
+        if ($value === null) {
+            return null;
         }
 
-        return $input;
+        switch ($filter) {
+            case 'int':
+            case 'integer':
+                return filter_var($value, FILTER_VALIDATE_INT);
+
+            case 'float':
+                return filter_var($value, FILTER_VALIDATE_FLOAT);
+
+            case 'email':
+                return filter_var($value, FILTER_VALIDATE_EMAIL);
+
+            case 'url':
+                return filter_var($value, FILTER_VALIDATE_URL);
+
+            case 'boolean':
+            case 'bool':
+                return filter_var($value, FILTER_VALIDATE_BOOLEAN);
+
+            case 'string':
+            default:
+                return htmlspecialchars(trim($value), ENT_QUOTES, 'UTF-8');
+        }
+    }
+
+    /**
+     * Get request fingerprint for rate limiting
+     */
+    public function fingerprint(): string
+    {
+        return hash('sha256', $this->getClientIp() . '|' . $this->getUserAgent());
+    }
+
+    /**
+     * Check if request matches pattern
+     */
+    public function is(string $pattern): bool
+    {
+        $path = $this->getPath();
+
+        // Convert pattern to regex
+        $regex = str_replace(['*', '/'], ['.*', '\/'], $pattern);
+        $regex = '/^' . $regex . '$/';
+
+        return preg_match($regex, $path) === 1;
+    }
+
+    /**
+     * Convert request to array for debugging
+     */
+    public function toArray(): array
+    {
+        return [
+            'method' => $this->getMethod(),
+            'uri' => $this->getUri(),
+            'path' => $this->getPath(),
+            'query' => $this->query,
+            'input' => $this->all(),
+            'headers' => $this->headers,
+            'client_ip' => $this->getClientIp(),
+            'user_agent' => $this->getUserAgent(),
+            'is_secure' => $this->isSecure(),
+            'is_ajax' => $this->isAjax(),
+            'expects_json' => $this->expectsJson(),
+            'route_params' => $this->routeParams
+        ];
     }
 }
