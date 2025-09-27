@@ -3,11 +3,16 @@
 namespace SecurityScanner\Services;
 
 use SecurityScanner\Core\Database;
+use SecurityScanner\Services\Notifications\EmailNotificationProvider;
+use SecurityScanner\Services\Notifications\WebhookNotificationProvider;
+use SecurityScanner\Services\Notifications\SmsNotificationProvider;
+use SecurityScanner\Services\Notifications\NotificationProviderInterface;
 
 class NotificationService
 {
     private Database $db;
     private array $config;
+    private array $providers = [];
 
     public function __construct(array $config = [])
     {
@@ -26,6 +31,15 @@ class NotificationService
             'webhook_timeout' => 30,
             'rate_limit_per_hour' => 100
         ], $config);
+
+        $this->initializeProviders();
+    }
+
+    private function initializeProviders(): void
+    {
+        $this->providers['email'] = new EmailNotificationProvider($this->config);
+        $this->providers['webhook'] = new WebhookNotificationProvider($this->config);
+        $this->providers['sms'] = new SmsNotificationProvider($this->config);
     }
 
     /**
@@ -40,7 +54,6 @@ class NotificationService
             ];
         }
 
-        // Check rate limiting
         if (!$this->checkRateLimit($website['notification_email'])) {
             return [
                 'success' => false,
@@ -50,19 +63,50 @@ class NotificationService
 
         $failedTests = $this->getFailedTestsFromScan($scanResult);
 
-        $subject = "Security Scan Alert: {$website['name']} - Tests Failed";
-        $body = $this->generateFailureEmailBody($website, $scanResult, $failedTests);
+        $template = [
+            'subject' => 'Security Scan Alert: {{website_name}} - {{failed_count}} Tests Failed',
+            'email_body' => $this->getFailureEmailTemplate()
+        ];
 
-        return $this->sendEmail(
-            $website['notification_email'],
-            $subject,
-            $body,
-            [
-                'website_id' => $website['id'],
-                'scan_id' => $scanResult['scan_id'] ?? null,
-                'notification_type' => 'test_failure'
-            ]
-        );
+        $context = [
+            'website_name' => $website['name'],
+            'website_url' => $website['url'],
+            'scan_time' => date('Y-m-d H:i:s'),
+            'total_tests' => count($scanResult['results'] ?? []),
+            'failed_count' => count($failedTests),
+            'failed_tests' => $failedTests
+        ];
+
+        $notificationResult = $this->sendNotification('email', $website['notification_email'], $template, $context, [
+            'website_id' => $website['id'],
+            'scan_id' => $scanResult['scan_id'] ?? null,
+            'notification_type' => 'test_failure'
+        ]);
+
+        $this->evaluateEscalation($website, $scanResult);
+
+        return $notificationResult;
+    }
+
+    public function evaluateEscalation(array $website, array $scanResult): array
+    {
+        try {
+            if (!class_exists('SecurityScanner\\Services\\AlertEscalationService')) {
+                return [
+                    'success' => false,
+                    'error' => 'AlertEscalationService not available'
+                ];
+            }
+
+            $escalationService = new \SecurityScanner\Services\AlertEscalationService($this);
+            return $escalationService->evaluateEscalation($website, $scanResult);
+
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
     }
 
     /**
@@ -116,43 +160,55 @@ class NotificationService
      */
     public function sendWebhookNotification(string $webhookUrl, array $payload): array
     {
-        try {
-            $context = stream_context_create([
-                'http' => [
-                    'method' => 'POST',
-                    'header' => [
-                        'Content-Type: application/json',
-                        'User-Agent: SecurityScanner/1.0'
-                    ],
-                    'content' => json_encode($payload),
-                    'timeout' => $this->config['webhook_timeout']
-                ]
-            ]);
+        $template = [
+            'webhook_body' => json_encode($payload)
+        ];
 
-            $response = file_get_contents($webhookUrl, false, $context);
+        $context = array_merge($payload, [
+            'notification_type' => 'webhook'
+        ]);
 
+        $result = $this->sendNotification('webhook', $webhookUrl, $template, $context);
+
+        if ($result['success']) {
             $this->logNotification('webhook_sent', [
-                'webhook_url' => $webhookUrl,
-                'payload_size' => strlen(json_encode($payload)),
-                'response_size' => strlen($response ?: '')
+                'webhook_url' => $this->maskUrl($webhookUrl),
+                'payload_size' => strlen(json_encode($payload))
             ]);
-
-            return [
-                'success' => true,
-                'response' => $response
-            ];
-
-        } catch (\Exception $e) {
+        } else {
             $this->logNotification('webhook_failed', [
-                'webhook_url' => $webhookUrl,
-                'error' => $e->getMessage()
+                'webhook_url' => $this->maskUrl($webhookUrl),
+                'error' => $result['error']
             ]);
-
-            return [
-                'success' => false,
-                'error' => $e->getMessage()
-            ];
         }
+
+        return $result;
+    }
+
+    private function maskUrl(string $url): string
+    {
+        $parsed = parse_url($url);
+
+        if (!$parsed) {
+            return '***';
+        }
+
+        $masked = ($parsed['scheme'] ?? 'http') . '://';
+
+        if (isset($parsed['host'])) {
+            $host = $parsed['host'];
+            if (strlen($host) > 6) {
+                $masked .= substr($host, 0, 3) . '***' . substr($host, -3);
+            } else {
+                $masked .= '***';
+            }
+        }
+
+        if (isset($parsed['path'])) {
+            $masked .= '/***';
+        }
+
+        return $masked;
     }
 
     /**
@@ -160,18 +216,30 @@ class NotificationService
      */
     public function sendSmsNotification(string $phoneNumber, string $message): array
     {
-        // This would integrate with an SMS service like Twilio, AWS SNS, etc.
-        // For now, we'll just log the attempt
-
-        $this->logNotification('sms_sent', [
-            'phone_number' => $this->maskPhoneNumber($phoneNumber),
-            'message_length' => strlen($message)
-        ]);
-
-        return [
-            'success' => true,
-            'message' => 'SMS would be sent to ' . $this->maskPhoneNumber($phoneNumber)
+        $template = [
+            'sms_body' => $message
         ];
+
+        $context = [
+            'notification_type' => 'sms',
+            'message' => $message
+        ];
+
+        $result = $this->sendNotification('sms', $phoneNumber, $template, $context);
+
+        if ($result['success']) {
+            $this->logNotification('sms_sent', [
+                'phone_number' => $this->maskPhoneNumber($phoneNumber),
+                'message_length' => strlen($message)
+            ]);
+        } else {
+            $this->logNotification('sms_failed', [
+                'phone_number' => $this->maskPhoneNumber($phoneNumber),
+                'error' => $result['error']
+            ]);
+        }
+
+        return $result;
     }
 
     /**
@@ -632,5 +700,135 @@ class NotificationService
     private function maskPhoneNumber(string $phone): string
     {
         return substr($phone, 0, 3) . str_repeat('*', max(0, strlen($phone) - 6)) . substr($phone, -3);
+    }
+
+    public function sendNotification(string $providerType, string $recipient, array $template, array $context, array $metadata = []): array
+    {
+        if (!isset($this->providers[$providerType])) {
+            return [
+                'success' => false,
+                'error' => "Provider type '{$providerType}' not available"
+            ];
+        }
+
+        try {
+            $notificationId = $this->db->insert('notifications', [
+                'type' => $providerType,
+                'recipient' => $recipient,
+                'subject' => $template['subject'] ?? '',
+                'body' => $template['email_body'] ?? $template['body'] ?? '',
+                'metadata' => json_encode($metadata),
+                'status' => 'pending',
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+
+            $provider = $this->providers[$providerType];
+            $result = $provider->send($recipient, $template, $context);
+
+            if ($result) {
+                $this->db->update('notifications', [
+                    'status' => 'sent',
+                    'sent_at' => date('Y-m-d H:i:s'),
+                    'updated_at' => date('Y-m-d H:i:s')
+                ], ['id' => $notificationId]);
+
+                return [
+                    'success' => true,
+                    'notification_id' => $notificationId
+                ];
+            } else {
+                $this->db->update('notifications', [
+                    'status' => 'failed',
+                    'error_message' => 'Provider send failed',
+                    'retry_count' => 0,
+                    'next_retry_at' => date('Y-m-d H:i:s', time() + $this->config['retry_delay']),
+                    'updated_at' => date('Y-m-d H:i:s')
+                ], ['id' => $notificationId]);
+
+                return [
+                    'success' => false,
+                    'error' => 'Failed to send notification',
+                    'notification_id' => $notificationId
+                ];
+            }
+
+        } catch (\Exception $e) {
+            $this->logNotification('notification_error', [
+                'provider_type' => $providerType,
+                'recipient' => $this->maskEmail($recipient),
+                'error' => $e->getMessage()
+            ]);
+
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    private function getFailureEmailTemplate(): string
+    {
+        return '<html>
+        <head>
+            <style>
+                body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+                .header { background: #d32f2f; color: white; padding: 20px; text-align: center; }
+                .content { padding: 20px; }
+                .website-info { background: #f5f5f5; padding: 15px; margin: 20px 0; border-radius: 5px; }
+                .test-failure { background: #ffebee; border-left: 4px solid #d32f2f; padding: 10px; margin: 10px 0; }
+                .footer { background: #f5f5f5; padding: 15px; text-align: center; font-size: 12px; color: #666; }
+            </style>
+        </head>
+        <body>
+            <div class="header">
+                <h1>Security Scan Alert</h1>
+                <p>Tests failed for {{website_name}}</p>
+            </div>
+
+            <div class="content">
+                <div class="website-info">
+                    <h3>Website Information</h3>
+                    <p><strong>Name:</strong> {{website_name}}</p>
+                    <p><strong>URL:</strong> <a href="{{website_url}}">{{website_url}}</a></p>
+                    <p><strong>Scan Time:</strong> {{scan_time}}</p>
+                    <p><strong>Total Tests:</strong> {{total_tests}}</p>
+                    <p><strong>Failed Tests:</strong> {{failed_count}}</p>
+                </div>
+
+                <h3>Failed Tests</h3>
+                {{failed_tests_list}}
+
+                <p>Please review your website\'s security configuration and address these issues as soon as possible.</p>
+            </div>
+
+            <div class="footer">
+                <p>This alert was generated by Security Scanner. To modify notification settings, please log into your dashboard.</p>
+            </div>
+        </body>
+        </html>';
+    }
+
+    public function getProviderStatus(string $providerType): array
+    {
+        if (!isset($this->providers[$providerType])) {
+            return [
+                'available' => false,
+                'error' => "Provider type '{$providerType}' not found"
+            ];
+        }
+
+        return array_merge([
+            'available' => true
+        ], $this->providers[$providerType]->getStatus());
+    }
+
+    public function testProvider(string $providerType): bool
+    {
+        if (!isset($this->providers[$providerType])) {
+            return false;
+        }
+
+        return $this->providers[$providerType]->test();
     }
 }
