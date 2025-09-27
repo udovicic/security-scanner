@@ -47,6 +47,9 @@
     <!-- Skip to main content link for screen readers -->
     <a href="#main-content" class="skip-link sr-only focus:not-sr-only">Skip to main content</a>
 
+    <!-- Accessibility initialization -->
+    <div x-data="accessibility()" x-init="init()" class="hidden" aria-hidden="true"></div>
+
     <div class="app-container">
         <header class="main-header" role="banner">
             <div class="header-container">

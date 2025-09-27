@@ -160,6 +160,39 @@ $currentConfig = [
                     <option value="intermediate">Intermediate</option>
                     <option value="advanced">Advanced</option>
                 </select>
+
+                <!-- Bulk Actions -->
+                <div x-data="{ bulkOpen: false }" class="relative">
+                    <button @click="bulkOpen = !bulkOpen"
+                            class="btn btn-outline flex items-center"
+                            :aria-expanded="bulkOpen">
+                        <span>Quick Add</span>
+                        <svg class="ml-2 h-4 w-4 transition-transform" :class="{ 'rotate-180': bulkOpen }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path>
+                        </svg>
+                    </button>
+
+                    <div x-show="bulkOpen"
+                         x-transition:enter="transition ease-out duration-200"
+                         x-transition:enter-start="opacity-0 scale-95"
+                         x-transition:enter-end="opacity-100 scale-100"
+                         x-transition:leave="transition ease-in duration-150"
+                         x-transition:leave-start="opacity-100 scale-100"
+                         x-transition:leave-end="opacity-0 scale-95"
+                         @click.away="bulkOpen = false"
+                         class="absolute right-0 mt-2 w-48 bg-white dark:bg-secondary-800 rounded-lg shadow-lg border border-secondary-200 dark:border-secondary-700 z-20">
+                        <div class="p-2">
+                            <button @click="addAllBasicTests(); bulkOpen = false"
+                                    class="w-full text-left px-3 py-2 text-sm text-secondary-700 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-md">
+                                Add All Basic Tests
+                            </button>
+                            <button @click="addAllSecurityTests(); bulkOpen = false"
+                                    class="w-full text-left px-3 py-2 text-sm text-secondary-700 dark:text-secondary-300 hover:bg-secondary-100 dark:hover:bg-secondary-700 rounded-md">
+                                Add All Security Tests
+                            </button>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -179,9 +212,14 @@ $currentConfig = [
                     <template x-for="test in filteredAvailableTests" :key="test.id">
                         <div :id="'test-' + test.id"
                              draggable="true"
+                             tabindex="0"
+                             role="button"
+                             :aria-label="'Add ' + test.name + ' to configuration. ' + test.description"
                              @dragstart="dragStart($event, test)"
                              @dragend="dragEnd($event)"
-                             class="test-card available-test mb-3 p-4 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-lg cursor-move hover:shadow-md transition-all duration-200">
+                             @keydown="handleKeyDown($event, test, false)"
+                             @click="addTest(test)"
+                             class="test-card available-test mb-3 p-4 bg-white dark:bg-secondary-800 border border-secondary-200 dark:border-secondary-700 rounded-lg cursor-pointer hover:shadow-md focus:ring-2 focus:ring-primary-500 focus:outline-none transition-all duration-200">
 
                             <div class="flex items-start space-x-3">
                                 <div class="flex-shrink-0">
@@ -257,9 +295,13 @@ $currentConfig = [
                     <template x-for="(test, index) in selectedTests" :key="test.id">
                         <div :id="'selected-test-' + test.id"
                              draggable="true"
+                             tabindex="0"
+                             role="button"
+                             :aria-label="'Remove ' + test.name + ' from configuration. Currently at position ' + (index + 1)"
                              @dragstart="dragStart($event, test, true)"
                              @dragend="dragEnd($event)"
-                             class="test-card selected-test mb-3 p-4 bg-white dark:bg-secondary-800 border border-primary-200 dark:border-primary-700 rounded-lg cursor-move hover:shadow-md transition-all duration-200">
+                             @keydown="handleKeyDown($event, test, true)"
+                             class="test-card selected-test mb-3 p-4 bg-white dark:bg-secondary-800 border border-primary-200 dark:border-primary-700 rounded-lg cursor-move hover:shadow-md focus:ring-2 focus:ring-primary-500 focus:outline-none transition-all duration-200">
 
                             <div class="flex items-start space-x-3">
                                 <div class="flex-shrink-0 flex items-center space-x-2">
@@ -345,6 +387,7 @@ function testConfiguration(availableTests, currentConfig) {
         filterDifficulty: '',
         draggedTest: null,
         isFromSelected: false,
+        dragOverZone: null,
 
         init() {
             // Initialize with current configuration
@@ -430,29 +473,56 @@ function testConfiguration(availableTests, currentConfig) {
             this.isFromSelected = false;
         },
 
-        dropTest(event) {
+        handleDragOver(event, zone) {
             event.preventDefault();
+            this.dragOverZone = zone;
+            event.dataTransfer.dropEffect = 'move';
+        },
+
+        handleDragLeave(event, zone) {
+            // Only clear if we're leaving the zone completely
+            if (!event.currentTarget.contains(event.relatedTarget)) {
+                this.dragOverZone = null;
+            }
+        },
+
+        handleDrop(event, zone) {
+            event.preventDefault();
+            this.dragOverZone = null;
 
             if (!this.draggedTest) return;
 
-            if (this.isFromSelected) {
-                // Reordering within selected tests
-                const draggedIndex = this.selectedTests.findIndex(test => test.id === this.draggedTest.id);
-                const dropTarget = event.target.closest('.selected-test');
+            if (zone === 'selected') {
+                if (this.isFromSelected) {
+                    // Reordering within selected tests
+                    const draggedIndex = this.selectedTests.findIndex(test => test.id === this.draggedTest.id);
+                    const dropTarget = event.target.closest('.selected-test');
 
-                if (dropTarget) {
-                    const dropIndex = Array.from(dropTarget.parentNode.children).indexOf(dropTarget);
-                    if (draggedIndex !== dropIndex) {
-                        // Reorder the array
-                        this.selectedTests.splice(dropIndex, 0, this.selectedTests.splice(draggedIndex, 1)[0]);
+                    if (dropTarget) {
+                        const dropIndex = Array.from(dropTarget.parentNode.children).indexOf(dropTarget);
+                        if (draggedIndex !== dropIndex && draggedIndex !== -1) {
+                            // Reorder the array
+                            this.selectedTests.splice(dropIndex, 0, this.selectedTests.splice(draggedIndex, 1)[0]);
+                        }
+                    }
+                } else {
+                    // Adding from available tests
+                    if (!this.selectedTests.find(test => test.id === this.draggedTest.id)) {
+                        this.selectedTests.push(this.draggedTest);
+                        // Show success feedback
+                        window.notify?.success(`Added "${this.draggedTest.name}" to configuration`);
                     }
                 }
-            } else {
-                // Adding from available tests
-                if (!this.selectedTests.find(test => test.id === this.draggedTest.id)) {
-                    this.selectedTests.push(this.draggedTest);
-                }
+            } else if (zone === 'available' && this.isFromSelected) {
+                // Removing from selected tests
+                this.removeTest(this.draggedTest.id);
+                window.notify?.info(`Removed "${this.draggedTest.name}" from configuration`);
             }
+        },
+
+        dropTest(event) {
+            // Fallback for the selected tests area
+            this.handleDrop(event, 'selected');
         },
 
         removeTest(testId) {
@@ -462,6 +532,48 @@ function testConfiguration(availableTests, currentConfig) {
         clearAllTests() {
             if (confirm('Are you sure you want to remove all selected tests?')) {
                 this.selectedTests = [];
+            }
+        },
+
+        // Keyboard navigation support
+        handleKeyDown(event, test, isSelected = false) {
+            if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                if (isSelected) {
+                    this.removeTest(test.id);
+                } else {
+                    this.addTest(test);
+                }
+            } else if (event.key === 'ArrowUp' || event.key === 'ArrowDown') {
+                event.preventDefault();
+                this.navigateTests(event.key === 'ArrowUp' ? -1 : 1, isSelected);
+            }
+        },
+
+        navigateTests(direction, isSelected) {
+            const cards = isSelected ?
+                document.querySelectorAll('.selected-test') :
+                document.querySelectorAll('.available-test');
+
+            const currentIndex = Array.from(cards).findIndex(card => card === document.activeElement);
+            const nextIndex = Math.max(0, Math.min(cards.length - 1, currentIndex + direction));
+
+            if (cards[nextIndex]) {
+                cards[nextIndex].focus();
+            }
+        },
+
+        addTest(test) {
+            if (!this.selectedTests.find(selected => selected.id === test.id)) {
+                this.selectedTests.push(test);
+                window.notify?.success(`Added "${test.name}" to configuration`);
+
+                // Focus the newly added test in the selected area
+                this.$nextTick(() => {
+                    const selectedCards = document.querySelectorAll('.selected-test');
+                    const lastCard = selectedCards[selectedCards.length - 1];
+                    if (lastCard) lastCard.focus();
+                });
             }
         },
 
@@ -477,6 +589,27 @@ function testConfiguration(availableTests, currentConfig) {
                     contentTests: this.selectedTests.filter(test => test.category === 'content').length
                 }
             };
+        },
+
+        // Bulk operations
+        addAllBasicTests() {
+            const basicTests = this.availableTests.filter(test =>
+                test.difficulty === 'basic' &&
+                !this.selectedTests.find(selected => selected.id === test.id)
+            );
+
+            this.selectedTests.push(...basicTests);
+            window.notify?.success(`Added ${basicTests.length} basic tests to configuration`);
+        },
+
+        addAllSecurityTests() {
+            const securityTests = this.availableTests.filter(test =>
+                test.category === 'security' &&
+                !this.selectedTests.find(selected => selected.id === test.id)
+            );
+
+            this.selectedTests.push(...securityTests);
+            window.notify?.success(`Added ${securityTests.length} security tests to configuration`);
         }
     };
 }

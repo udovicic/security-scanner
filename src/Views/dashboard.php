@@ -4,6 +4,25 @@ $metaDescription = 'Security scanner dashboard showing website monitoring status
 $currentPage = 'dashboard';
 ?>
 
+<!-- Real-time updates container -->
+<div x-data="realTimeUpdates('/api/dashboard/updates', 30000)"
+     x-init="$watch('data', (newData) => { if (newData) updateDashboardContent(newData); })"
+     @data-updated="updateDashboardContent($event.detail.data)"
+     @connection-failed="$store.notifications.add({ type: 'error', title: 'Connection Lost', message: 'Real-time updates are temporarily unavailable' })"
+     data-page="dashboard">
+
+<!-- Connection status indicator -->
+<div class="fixed top-20 right-4 z-50" x-show="!isConnected" x-transition>
+    <div class="bg-red-100 dark:bg-red-900/20 border border-red-300 dark:border-red-700 text-red-800 dark:text-red-200 px-3 py-2 rounded-lg shadow-lg">
+        <div class="flex items-center space-x-2">
+            <svg class="w-4 h-4 animate-pulse" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"></path>
+            </svg>
+            <span class="text-sm font-medium">Connection lost</span>
+        </div>
+    </div>
+</div>
+
 <!-- Dashboard Header Section -->
 <div class="bg-white dark:bg-secondary-800 shadow-sm border-b border-secondary-200 dark:border-secondary-700">
     <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 lg:py-8">
@@ -17,15 +36,36 @@ $currentPage = 'dashboard';
                 </p>
             </div>
             <div class="flex flex-col sm:flex-row gap-3">
-                <button onclick="refreshDashboard()"
-                        class="btn btn-outline inline-flex items-center justify-center"
-                        data-tooltip="Refresh dashboard data">
-                    <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
-                              d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
-                    </svg>
-                    Refresh
-                </button>
+                <div x-data="autoRefresh({ interval: 60000, endpoint: '/api/dashboard/refresh' })"
+                     @refresh-completed="updateDashboardContent($event.detail.data)"
+                     class="flex items-center space-x-3">
+                    <button @click="forceUpdate()"
+                            class="btn btn-outline inline-flex items-center justify-center"
+                            data-tooltip="Refresh dashboard data"
+                            :disabled="isConnected === false">
+                        <svg class="w-4 h-4 mr-2" :class="{ 'animate-spin': isConnected === false }" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                  d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"></path>
+                        </svg>
+                        <span x-text="isConnected === false ? 'Updating...' : 'Refresh'"></span>
+                    </button>
+                    <button @click="toggleAutoRefresh()"
+                            class="btn btn-ghost btn-sm"
+                            data-tooltip="Toggle auto-refresh">
+                        <span x-show="isAutoRefreshing" class="flex items-center">
+                            <svg class="w-4 h-4 mr-1 text-green-500" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clip-rule="evenodd"></path>
+                            </svg>
+                            Auto
+                        </span>
+                        <span x-show="!isAutoRefreshing" class="flex items-center">
+                            <svg class="w-4 h-4 mr-1 text-gray-400" fill="currentColor" viewBox="0 0 20 20">
+                                <path fill-rule="evenodd" d="M13.477 14.89A6 6 0 015.11 6.524l8.367 8.368zm1.414-1.414L6.524 5.11a6 6 0 018.367 8.367zM18 10a8 8 0 11-16 0 8 8 0 0116 0z" clip-rule="evenodd"></path>
+                            </svg>
+                            Manual
+                        </span>
+                    </button>
+                </div>
                 <a href="/websites/create" class="btn btn-primary">
                     <svg class="w-4 h-4 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4"></path>
@@ -41,11 +81,12 @@ $currentPage = 'dashboard';
 <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
     <div class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 lg:gap-6">
         <!-- Total Websites -->
-        <div class="card bg-gradient-to-br from-primary-50 to-primary-100 dark:from-primary-900/20 dark:to-primary-800/20 border-primary-200 dark:border-primary-800">
+        <div class="card bg-gradient-to-br from-primary-50 to-primary-100 dark:from-primary-900/20 dark:to-primary-800/20 border-primary-200 dark:border-primary-800"
+             data-stat="total_websites">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-primary-600 dark:text-primary-400">Total Websites</p>
-                    <p class="text-2xl lg:text-3xl font-bold text-primary-900 dark:text-primary-100">
+                    <p class="text-2xl lg:text-3xl font-bold text-primary-900 dark:text-primary-100 stat-value transition-all duration-300">
                         <?= htmlspecialchars($metrics['total_websites'] ?? '0') ?>
                     </p>
                     <?php if (isset($metrics['websites_change'])): ?>
@@ -67,11 +108,12 @@ $currentPage = 'dashboard';
         </div>
 
         <!-- Scans Today -->
-        <div class="card bg-gradient-to-br from-success-50 to-success-100 dark:from-success-900/20 dark:to-success-800/20 border-success-200 dark:border-success-800">
+        <div class="card bg-gradient-to-br from-success-50 to-success-100 dark:from-success-900/20 dark:to-success-800/20 border-success-200 dark:border-success-800"
+             data-stat="scans_today">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-success-600 dark:text-success-400">Scans Today</p>
-                    <p class="text-2xl lg:text-3xl font-bold text-success-900 dark:text-success-100">
+                    <p class="text-2xl lg:text-3xl font-bold text-success-900 dark:text-success-100 stat-value transition-all duration-300">
                         <?= htmlspecialchars($metrics['scans_today'] ?? '0') ?>
                     </p>
                     <p class="text-xs text-success-700 dark:text-success-300 mt-1">Automated security scans</p>
@@ -86,11 +128,12 @@ $currentPage = 'dashboard';
         </div>
 
         <!-- Success Rate -->
-        <div class="card bg-gradient-to-br from-info-50 to-info-100 dark:from-info-900/20 dark:to-info-800/20 border-info-200 dark:border-info-800">
+        <div class="card bg-gradient-to-br from-info-50 to-info-100 dark:from-info-900/20 dark:to-info-800/20 border-info-200 dark:border-info-800"
+             data-stat="success_rate">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-info-600 dark:text-info-400">Success Rate</p>
-                    <p class="text-2xl lg:text-3xl font-bold text-info-900 dark:text-info-100">
+                    <p class="text-2xl lg:text-3xl font-bold text-info-900 dark:text-info-100 stat-value transition-all duration-300">
                         <?= htmlspecialchars(number_format($metrics['success_rate'] ?? 0, 1)) ?>%
                     </p>
                     <p class="text-xs text-info-700 dark:text-info-300 mt-1">Last 7 days</p>
@@ -105,11 +148,12 @@ $currentPage = 'dashboard';
         </div>
 
         <!-- Active Issues -->
-        <div class="card bg-gradient-to-br from-warning-50 to-warning-100 dark:from-warning-900/20 dark:to-warning-800/20 border-warning-200 dark:border-warning-800">
+        <div class="card bg-gradient-to-br from-warning-50 to-warning-100 dark:from-warning-900/20 dark:to-warning-800/20 border-warning-200 dark:border-warning-800"
+             data-stat="active_issues">
             <div class="flex items-center justify-between">
                 <div>
                     <p class="text-sm font-medium text-warning-600 dark:text-warning-400">Active Issues</p>
-                    <p class="text-2xl lg:text-3xl font-bold text-warning-900 dark:text-warning-100">
+                    <p class="text-2xl lg:text-3xl font-bold text-warning-900 dark:text-warning-100 stat-value transition-all duration-300">
                         <?= htmlspecialchars($metrics['active_issues'] ?? '0') ?>
                     </p>
                     <p class="text-xs text-warning-700 dark:text-warning-300 mt-1">Require attention</p>
@@ -137,7 +181,7 @@ $currentPage = 'dashboard';
                         </svg>
                     </button>
                 </div>
-                <div class="p-6" id="activity-container">
+                <div class="p-6" id="recent-tests-container">
                     <?php if (isset($recent_activity) && !empty($recent_activity)): ?>
                     <div class="space-y-4">
                         <?php foreach ($recent_activity as $activity): ?>
@@ -179,8 +223,9 @@ $currentPage = 'dashboard';
             </div>
         </div>
 
-        <!-- System Health Section -->
-        <div>
+        <!-- System Health & Alerts Section -->
+        <div class="space-y-6">
+            <!-- System Health -->
             <div class="card">
                 <div class="p-6 border-b border-secondary-200 dark:border-secondary-700">
                     <h3 class="text-lg font-semibold text-secondary-900 dark:text-white">System Health</h3>
@@ -207,6 +252,43 @@ $currentPage = 'dashboard';
                         <p class="mt-2 text-sm text-secondary-500 dark:text-secondary-400">
                             System health data unavailable
                         </p>
+                    </div>
+                    <?php endif; ?>
+                </div>
+            </div>
+
+            <!-- Recent Alerts -->
+            <div class="card">
+                <div class="p-6 border-b border-secondary-200 dark:border-secondary-700">
+                    <h3 class="text-lg font-semibold text-secondary-900 dark:text-white">Recent Alerts</h3>
+                </div>
+                <div class="p-6" id="alerts-container">
+                    <?php if (isset($recent_alerts) && !empty($recent_alerts)): ?>
+                    <div class="space-y-3">
+                        <?php foreach ($recent_alerts as $alert): ?>
+                        <div class="p-3 rounded-lg border border-gray-200 dark:border-gray-700 bg-<?= htmlspecialchars($alert['type']) ?>-50 dark:bg-<?= htmlspecialchars($alert['type']) ?>-900/20">
+                            <div class="flex items-start">
+                                <div class="flex-1">
+                                    <h4 class="text-sm font-medium text-gray-900 dark:text-white">
+                                        <?= htmlspecialchars($alert['title']) ?>
+                                    </h4>
+                                    <p class="mt-1 text-xs text-gray-600 dark:text-gray-400">
+                                        <?= htmlspecialchars($alert['message']) ?>
+                                    </p>
+                                    <p class="mt-2 text-xs text-gray-500 dark:text-gray-500">
+                                        <?= htmlspecialchars($alert['time']) ?>
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+                        <?php endforeach; ?>
+                    </div>
+                    <?php else: ?>
+                    <div class="text-center py-6">
+                        <svg class="w-8 h-8 mx-auto text-gray-400 dark:text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-5 5v-5zM4 16h6v2H4v-2zm0-4h6v2H4v-2zm0-4h6v2H4V8z"></path>
+                        </svg>
+                        <p class="mt-2 text-sm text-gray-500 dark:text-gray-400">No recent alerts</p>
                     </div>
                     <?php endif; ?>
                 </div>
@@ -562,4 +644,24 @@ window.addEventListener('beforeunload', () => {
         clearInterval(refreshInterval);
     }
 });
+
+// Enhanced real-time dashboard functionality
+function updateDashboardContent(data) {
+    if (data.stats) {
+        updateDashboardStats(data.stats);
+    }
+    if (data.recentTests) {
+        updateRecentTests(data.recentTests);
+    }
+    if (data.alerts) {
+        updateAlerts(data.alerts);
+    }
+    if (data.newAlerts && data.newAlerts.length > 0) {
+        data.newAlerts.forEach(alert => {
+            window.notify[alert.type](alert.message);
+        });
+    }
+}
 </script>
+
+</div> <!-- End real-time updates container -->

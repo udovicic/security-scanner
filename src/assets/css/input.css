@@ -7,6 +7,42 @@
 /* Google Fonts Import */
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
+/* Real-time Updates Animations */
+@keyframes stat-updated {
+  0% {
+    transform: scale(1);
+    background-color: rgba(59, 130, 246, 0.1);
+  }
+  50% {
+    transform: scale(1.05);
+    background-color: rgba(59, 130, 246, 0.2);
+  }
+  100% {
+    transform: scale(1);
+    background-color: transparent;
+  }
+}
+
+@keyframes slide-in-notification {
+  0% {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  100% {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes pulse-connection {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.5;
+  }
+}
+
 @layer base {
   /* Custom CSS Reset and Base Styles */
   html {
@@ -210,6 +246,229 @@
 
   .breadcrumb-separator {
     @apply text-secondary-400 select-none;
+  }
+
+  /* Real-time Update Classes */
+  .stat-updated {
+    animation: stat-updated 1s ease-in-out;
+  }
+
+  .notification-slide-in {
+    animation: slide-in-notification 0.3s ease-out;
+  }
+
+  .connection-indicator {
+    animation: pulse-connection 2s infinite;
+  }
+
+  .real-time-update {
+    @apply transition-all duration-300 ease-in-out;
+  }
+
+  .real-time-update.updating {
+    @apply bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-800;
+  }
+
+  .status-indicator.updating {
+    @apply animate-pulse bg-blue-500;
+  }
+
+  /* Accessibility Styles */
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+  }
+
+  .sr-only-focusable:focus,
+  .sr-only-focusable:active {
+    position: static;
+    width: auto;
+    height: auto;
+    padding: inherit;
+    margin: inherit;
+    overflow: visible;
+    clip: auto;
+    white-space: inherit;
+  }
+
+  /* Skip link */
+  .skip-link {
+    @apply sr-only-focusable absolute top-0 left-0 z-50 px-4 py-2 bg-primary-600 text-white rounded-br-md font-medium;
+    transform: translateY(-100%);
+    transition: transform 0.3s ease-in-out;
+  }
+
+  .skip-link:focus {
+    transform: translateY(0);
+  }
+
+  /* High contrast mode */
+  .high-contrast {
+    --tw-border-opacity: 1 !important;
+    --tw-bg-opacity: 1 !important;
+    --tw-text-opacity: 1 !important;
+  }
+
+  .high-contrast * {
+    border-color: currentColor !important;
+    background-color: transparent !important;
+    color: inherit !important;
+  }
+
+  .high-contrast button,
+  .high-contrast input,
+  .high-contrast select,
+  .high-contrast textarea {
+    border: 2px solid currentColor !important;
+    background-color: white !important;
+    color: black !important;
+  }
+
+  .high-contrast .dark button,
+  .high-contrast .dark input,
+  .high-contrast .dark select,
+  .high-contrast .dark textarea {
+    background-color: black !important;
+    color: white !important;
+  }
+
+  /* Reduced motion */
+  .reduced-motion *,
+  .reduced-motion *::before,
+  .reduced-motion *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  /* Focus indicators */
+  .focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  }
+
+  .dark .focus-visible {
+    @apply ring-offset-gray-900;
+  }
+
+  /* Enhanced focus for keyboard navigation */
+  :focus-visible {
+    @apply outline-none ring-2 ring-primary-500 ring-offset-2;
+  }
+
+  .dark :focus-visible {
+    @apply ring-offset-gray-900;
+  }
+
+  /* Focus within for containers */
+  .focus-within-ring:focus-within {
+    @apply ring-2 ring-primary-500 ring-offset-2;
+  }
+
+  /* Keyboard navigation indicators */
+  [tabindex="-1"]:focus {
+    outline: none;
+  }
+
+  .keyboard-nav button:focus,
+  .keyboard-nav a:focus,
+  .keyboard-nav input:focus,
+  .keyboard-nav textarea:focus,
+  .keyboard-nav select:focus {
+    @apply ring-2 ring-primary-500 ring-offset-2;
+  }
+
+  /* Accessible form elements */
+  .form-error {
+    @apply border-red-500 focus:border-red-500 focus:ring-red-500;
+  }
+
+  .form-success {
+    @apply border-green-500 focus:border-green-500 focus:ring-green-500;
+  }
+
+  /* Live region for screen readers */
+  #sr-live-region {
+    @apply sr-only;
+  }
+
+  /* Improved hover and active states for accessibility */
+  .btn:hover:not(:disabled) {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.12);
+  }
+
+  .reduced-motion .btn:hover:not(:disabled) {
+    transform: none;
+  }
+
+  /* Aria attributes styling */
+  [aria-expanded="true"] .expand-icon {
+    transform: rotate(180deg);
+  }
+
+  [aria-pressed="true"] {
+    @apply bg-primary-100 dark:bg-primary-900/20;
+  }
+
+  [aria-selected="true"] {
+    @apply bg-primary-50 dark:bg-primary-900/20 border-primary-500;
+  }
+
+  [aria-invalid="true"] {
+    @apply border-red-500;
+  }
+
+  /* Loading and status indicators for screen readers */
+  [aria-busy="true"]::after {
+    content: " (loading)";
+    @apply sr-only;
+  }
+
+  [aria-live] {
+    @apply sr-only;
+  }
+
+  /* Tooltip accessibility */
+  [role="tooltip"] {
+    @apply absolute z-50 px-2 py-1 text-sm bg-gray-900 text-white rounded shadow-lg pointer-events-none;
+  }
+
+  /* Modal accessibility */
+  .modal-overlay {
+    @apply fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50;
+  }
+
+  .modal-content {
+    @apply bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-lg w-full mx-4 max-h-screen overflow-y-auto;
+  }
+
+  /* Alert and notification accessibility */
+  [role="alert"] {
+    @apply p-4 border rounded-lg;
+  }
+
+  [role="alert"].alert-error {
+    @apply bg-red-50 border-red-200 text-red-800 dark:bg-red-900/20 dark:border-red-800 dark:text-red-200;
+  }
+
+  [role="alert"].alert-warning {
+    @apply bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-900/20 dark:border-yellow-800 dark:text-yellow-200;
+  }
+
+  [role="alert"].alert-success {
+    @apply bg-green-50 border-green-200 text-green-800 dark:bg-green-900/20 dark:border-green-800 dark:text-green-200;
+  }
+
+  [role="alert"].alert-info {
+    @apply bg-blue-50 border-blue-200 text-blue-800 dark:bg-blue-900/20 dark:border-blue-800 dark:text-blue-200;
   }
 
   /* Alert styles */
