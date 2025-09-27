@@ -301,22 +301,94 @@ class InputSanitizer
      */
     public function middleware(array $rules = []): \Closure
     {
-        return function(Request $request, \Closure $next) use ($rules) {
+        return function($request, \Closure $next) use ($rules) {
             // Sanitize request data
-            $sanitizedPost = $this->sanitize($request->all(), $rules['post'] ?? []);
-            $sanitizedGet = $this->sanitize($request->query(), $rules['get'] ?? []);
+            $sanitizedPost = $this->sanitize($_POST, $rules['post'] ?? []);
+            $sanitizedGet = $this->sanitize($_GET, $rules['get'] ?? []);
 
-            // Create new request with sanitized data
-            $sanitizedRequest = new Request(
-                $sanitizedGet,
-                $sanitizedPost,
-                $request->server(),
-                $request->files(),
-                $request->cookies()
-            );
+            // Update global arrays with sanitized data
+            $_POST = $sanitizedPost;
+            $_GET = $sanitizedGet;
 
-            return $next($sanitizedRequest);
+            return $next($request);
         };
+    }
+
+    /**
+     * Generate secure CSRF token
+     */
+    public static function generateCsrfToken(): string
+    {
+        return bin2hex(random_bytes(32));
+    }
+
+    /**
+     * Validate CSRF token
+     */
+    public static function validateCsrfToken(string $token, string $sessionToken): bool
+    {
+        if (empty($token) || empty($sessionToken)) {
+            return false;
+        }
+
+        return hash_equals($sessionToken, $token);
+    }
+
+    /**
+     * Sanitize JSON input
+     */
+    public function sanitizeJson(string $json, array $schema = []): array
+    {
+        $data = json_decode($json, true);
+
+        if (json_last_error() !== JSON_ERROR_NONE) {
+            throw new \InvalidArgumentException('Invalid JSON: ' . json_last_error_msg());
+        }
+
+        if (!empty($schema)) {
+            return $this->sanitizeArray($data, $schema);
+        }
+
+        return $this->sanitize($data);
+    }
+
+    /**
+     * Sanitize array data with schema validation
+     */
+    public function sanitizeArray(array $data, array $schema): array
+    {
+        $sanitized = [];
+
+        foreach ($schema as $field => $rules) {
+            $value = $data[$field] ?? null;
+
+            if ($value === null) {
+                if ($rules['required'] ?? false) {
+                    throw new \InvalidArgumentException("Required field '{$field}' is missing");
+                }
+                continue;
+            }
+
+            $sanitized[$field] = $this->sanitize($value, $rules);
+        }
+
+        // Check for unexpected fields
+        $allowedFields = array_keys($schema);
+        $unexpectedFields = array_diff(array_keys($data), $allowedFields);
+
+        if (!empty($unexpectedFields) && ($this->config['strict_mode'] ?? true)) {
+            throw new \InvalidArgumentException('Unexpected fields: ' . implode(', ', $unexpectedFields));
+        }
+
+        return $sanitized;
+    }
+
+    /**
+     * Rate limiting token generation
+     */
+    public static function generateRateLimitToken(string $identifier): string
+    {
+        return hash('sha256', $identifier . date('YmdH') . ($_SERVER['SERVER_NAME'] ?? ''));
     }
 
     /**
