@@ -30,6 +30,9 @@ require_once SRC_PATH . '/Core/Autoloader.php';
 // Register autoloader
 SecurityScanner\Core\Autoloader::register();
 
+// Load helper functions
+require_once SRC_PATH . '/Core/helpers.php';
+
 // Load environment configuration
 try {
     $config = SecurityScanner\Core\Config::getInstance();

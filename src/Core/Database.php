@@ -10,6 +10,10 @@ class Database
     private Logger $logger;
     private SqlSecurityValidator $sqlValidator;
     private bool $enableSqlValidation = true;
+    private array $readReplicas = [];
+    private bool $enableReadReplicas = false;
+    private string $currentWriteConnection = 'mysql';
+    private int $replicaRoundRobin = 0;
 
     private function __construct()
     {
@@ -17,6 +21,7 @@ class Database
         $this->logger = Logger::errors();
         $this->sqlValidator = new SqlSecurityValidator();
         $this->enableSqlValidation = $this->config->get('database.enable_sql_validation', true);
+        $this->initializeReadReplicas();
     }
 
     public static function getInstance(): Database
@@ -707,6 +712,254 @@ class Database
         }
 
         return false;
+    }
+
+    private function initializeReadReplicas(): void
+    {
+        $replicaConfigs = $this->config->get('database.read_replicas', []);
+        $this->enableReadReplicas = !empty($replicaConfigs) && $this->config->get('database.enable_read_replicas', false);
+
+        if ($this->enableReadReplicas) {
+            foreach ($replicaConfigs as $replicaName => $config) {
+                $this->readReplicas[$replicaName] = $config;
+            }
+
+            $this->logger->info("Read replicas initialized", [
+                'replica_count' => count($this->readReplicas),
+                'replicas' => array_keys($this->readReplicas)
+            ]);
+        }
+    }
+
+    public function getOptimalReadConnection(): \PDO
+    {
+        if (!$this->enableReadReplicas || empty($this->readReplicas)) {
+            return $this->getWriteConnection();
+        }
+
+        $availableReplicas = $this->getHealthyReplicas();
+
+        if (empty($availableReplicas)) {
+            $this->logger->warning("No healthy read replicas available, falling back to write connection");
+            return $this->getWriteConnection();
+        }
+
+        $selectedReplica = $this->selectReadReplica($availableReplicas);
+        return $this->getConnection($selectedReplica);
+    }
+
+    private function getHealthyReplicas(): array
+    {
+        $healthyReplicas = [];
+
+        foreach (array_keys($this->readReplicas) as $replicaName) {
+            if ($this->isReplicaHealthy($replicaName)) {
+                $healthyReplicas[] = $replicaName;
+            }
+        }
+
+        return $healthyReplicas;
+    }
+
+    private function isReplicaHealthy(string $replicaName): bool
+    {
+        try {
+            $pdo = $this->getConnection($replicaName);
+            $result = $pdo->query('SELECT 1')->fetchColumn();
+            return $result === 1;
+        } catch (\Exception $e) {
+            $this->logger->warning("Read replica health check failed", [
+                'replica' => $replicaName,
+                'error' => $e->getMessage()
+            ]);
+            return false;
+        }
+    }
+
+    private function selectReadReplica(array $availableReplicas): string
+    {
+        // Round-robin selection
+        $replicaCount = count($availableReplicas);
+        $selectedIndex = $this->replicaRoundRobin % $replicaCount;
+        $this->replicaRoundRobin = ($this->replicaRoundRobin + 1) % $replicaCount;
+
+        return $availableReplicas[$selectedIndex];
+    }
+
+    public function queryRead(string $sql, array $params = []): \PDOStatement
+    {
+        // Validate that this is a read-only query
+        if (!$this->isReadOnlyQuery($sql)) {
+            throw new \InvalidArgumentException('Write operations are not allowed on read connections');
+        }
+
+        return $this->query($sql, $params, $this->getOptimalReadConnectionName());
+    }
+
+    public function queryWrite(string $sql, array $params = []): \PDOStatement
+    {
+        return $this->query($sql, $params, $this->currentWriteConnection);
+    }
+
+    private function getOptimalReadConnectionName(): ?string
+    {
+        if (!$this->enableReadReplicas || empty($this->readReplicas)) {
+            return $this->currentWriteConnection;
+        }
+
+        $availableReplicas = $this->getHealthyReplicas();
+
+        if (empty($availableReplicas)) {
+            return $this->currentWriteConnection;
+        }
+
+        return $this->selectReadReplica($availableReplicas);
+    }
+
+    private function isReadOnlyQuery(string $sql): bool
+    {
+        $sql = trim(strtoupper($sql));
+        $writeOperations = ['INSERT', 'UPDATE', 'DELETE', 'REPLACE', 'CREATE', 'ALTER', 'DROP', 'TRUNCATE'];
+
+        foreach ($writeOperations as $operation) {
+            if (strpos($sql, $operation) === 0) {
+                return false;
+            }
+        }
+
+        return true;
+    }
+
+    public function fetchRowRead(string $sql, array $params = []): ?array
+    {
+        $statement = $this->queryRead($sql, $params);
+        $result = $statement->fetch();
+        return $result ?: null;
+    }
+
+    public function fetchAllRead(string $sql, array $params = []): array
+    {
+        $statement = $this->queryRead($sql, $params);
+        return $statement->fetchAll();
+    }
+
+    public function fetchColumnRead(string $sql, array $params = []): mixed
+    {
+        $statement = $this->queryRead($sql, $params);
+        return $statement->fetchColumn();
+    }
+
+    public function getReplicaStatus(): array
+    {
+        if (!$this->enableReadReplicas) {
+            return [
+                'enabled' => false,
+                'replicas' => []
+            ];
+        }
+
+        $status = [
+            'enabled' => true,
+            'total_replicas' => count($this->readReplicas),
+            'replicas' => []
+        ];
+
+        foreach (array_keys($this->readReplicas) as $replicaName) {
+            $status['replicas'][$replicaName] = [
+                'name' => $replicaName,
+                'healthy' => $this->isReplicaHealthy($replicaName),
+                'lag' => $this->getReplicationLag($replicaName)
+            ];
+        }
+
+        $healthyCount = count(array_filter($status['replicas'], fn($replica) => $replica['healthy']));
+        $status['healthy_replicas'] = $healthyCount;
+        $status['health_percentage'] = $status['total_replicas'] > 0 ?
+            round(($healthyCount / $status['total_replicas']) * 100, 2) : 0;
+
+        return $status;
+    }
+
+    private function getReplicationLag(string $replicaName): ?float
+    {
+        try {
+            $replica = $this->getConnection($replicaName);
+            $replicaConfig = $this->readReplicas[$replicaName];
+
+            if ($replicaConfig['driver'] === 'mysql') {
+                return $this->getMysqlReplicationLag($replica);
+            } elseif ($replicaConfig['driver'] === 'pgsql') {
+                return $this->getPostgresReplicationLag($replica);
+            }
+        } catch (\Exception $e) {
+            $this->logger->warning("Failed to get replication lag", [
+                'replica' => $replicaName,
+                'error' => $e->getMessage()
+            ]);
+        }
+
+        return null;
+    }
+
+    private function getMysqlReplicationLag(\PDO $replica): ?float
+    {
+        try {
+            $result = $replica->query("SHOW SLAVE STATUS")->fetch();
+
+            if ($result && isset($result['Seconds_Behind_Master'])) {
+                return (float) $result['Seconds_Behind_Master'];
+            }
+        } catch (\Exception $e) {
+            // Replica might not be configured as slave or user lacks privileges
+        }
+
+        return null;
+    }
+
+    private function getPostgresReplicationLag(\PDO $replica): ?float
+    {
+        try {
+            $result = $replica->query("SELECT EXTRACT(EPOCH FROM (now() - pg_last_xact_replay_timestamp()))")->fetchColumn();
+            return $result ? (float) $result : null;
+        } catch (\Exception $e) {
+            // Replica might not be configured for streaming replication
+        }
+
+        return null;
+    }
+
+    public function enableReadReplicas(bool $enable = true): void
+    {
+        $this->enableReadReplicas = $enable && !empty($this->readReplicas);
+
+        $this->logger->info("Read replicas status changed", [
+            'enabled' => $this->enableReadReplicas,
+            'replica_count' => count($this->readReplicas)
+        ]);
+    }
+
+    public function addReadReplica(string $name, array $config): void
+    {
+        $this->readReplicas[$name] = $config;
+
+        $this->logger->info("Read replica added", [
+            'replica_name' => $name,
+            'host' => $config['host'] ?? 'unknown'
+        ]);
+    }
+
+    public function removeReadReplica(string $name): void
+    {
+        if (isset($this->readReplicas[$name])) {
+            unset($this->readReplicas[$name]);
+
+            // Close existing connection if open
+            $this->closeConnection($name);
+
+            $this->logger->info("Read replica removed", [
+                'replica_name' => $name
+            ]);
+        }
     }
 
     private function __clone() {}

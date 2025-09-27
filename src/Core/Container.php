@@ -11,6 +11,8 @@ class Container
     private array $aliases = [];
     private array $tags = [];
     private Logger $logger;
+    private ?LazyLoader $lazyLoader = null;
+    private bool $lazyLoadingEnabled = false;
 
     private function __construct()
     {
@@ -336,32 +338,108 @@ class Container
     }
 
     /**
+     * Enable lazy loading for dependencies
+     */
+    public function enableLazyLoading(): void
+    {
+        $this->lazyLoadingEnabled = true;
+        $this->lazyLoader = LazyLoader::getInstance();
+
+        $this->logger->info('Lazy loading enabled for container');
+    }
+
+    /**
+     * Register a lazy-loaded service
+     */
+    public function lazy(string $abstract, callable $factory, array $dependencies = [], bool $singleton = true): void
+    {
+        if (!$this->lazyLoadingEnabled) {
+            $this->enableLazyLoading();
+        }
+
+        $this->lazyLoader->registerWithDependencies($abstract, $factory, $dependencies, $singleton);
+
+        // Also register in container for compatibility
+        $this->bind($abstract, function() use ($abstract) {
+            return $this->lazyLoader->get($abstract);
+        }, $singleton);
+
+        $this->logger->debug('Lazy service registered', [
+            'abstract' => $abstract,
+            'dependencies' => $dependencies,
+            'singleton' => $singleton
+        ]);
+    }
+
+    /**
+     * Preload lazy dependencies
+     */
+    public function preload(array $keys = []): void
+    {
+        if ($this->lazyLoader) {
+            $this->lazyLoader->preload($keys);
+        }
+    }
+
+    /**
+     * Get lazy loading statistics
+     */
+    public function getLazyStats(): array
+    {
+        if (!$this->lazyLoader) {
+            return [
+                'enabled' => false,
+                'stats' => []
+            ];
+        }
+
+        return [
+            'enabled' => true,
+            'stats' => $this->lazyLoader->getLoadStats()
+        ];
+    }
+
+    /**
      * Register core services
      */
     public function registerCoreServices(): void
     {
-        // Register core singletons
-        $this->singleton(Config::class, function() {
+        // Enable lazy loading first
+        $this->enableLazyLoading();
+
+        // Register core lazy-loaded singletons
+        $this->lazy(Config::class, function() {
             return Config::getInstance();
         });
 
-        $this->singleton(Database::class, function() {
+        $this->lazy(Database::class, function() {
             return Database::getInstance();
+        }, [Config::class]);
+
+        $this->lazy(QueryOptimizer::class, function() {
+            return new QueryOptimizer(
+                $this->get(Database::class),
+                $this->get(Config::class)->get('query_optimizer', [])
+            );
+        }, [Database::class, Config::class]);
+
+        $this->lazy(AssetLazyLoader::class, function() {
+            return AssetLazyLoader::getInstance();
         });
 
-        $this->singleton('logger.access', function() {
+        $this->lazy('logger.access', function() {
             return Logger::access();
         });
 
-        $this->singleton('logger.error', function() {
+        $this->lazy('logger.error', function() {
             return Logger::errors();
         });
 
-        $this->singleton('logger.security', function() {
+        $this->lazy('logger.security', function() {
             return Logger::security();
         });
 
-        $this->singleton('logger.scheduler', function() {
+        $this->lazy('logger.scheduler', function() {
             return Logger::scheduler();
         });
 
@@ -369,6 +447,8 @@ class Container
         $this->alias('config', Config::class);
         $this->alias('db', Database::class);
         $this->alias('database', Database::class);
+        $this->alias('query_optimizer', QueryOptimizer::class);
+        $this->alias('asset_loader', AssetLazyLoader::class);
 
         // Tag loggers
         $this->tag([
@@ -378,7 +458,7 @@ class Container
             'logger.scheduler'
         ], 'loggers');
 
-        $this->logger->info('Core services registered in container');
+        $this->logger->info('Core services registered in container with lazy loading');
     }
 
     /**
