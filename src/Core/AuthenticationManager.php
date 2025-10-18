@@ -11,7 +11,7 @@ class AuthenticationManager
     public function __construct(array $config = [])
     {
         $this->db = Database::getInstance();
-        $this->logger = new Logger('authentication');
+        $this->logger = Logger::channel('authentication');
 
         $this->config = array_merge([
             'password_min_length' => 8,

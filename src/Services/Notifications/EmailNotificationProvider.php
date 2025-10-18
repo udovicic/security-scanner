@@ -28,7 +28,7 @@ class EmailNotificationProvider implements NotificationProviderInterface
             'use_phpmailer' => true
         ], $config);
 
-        $this->logger = new Logger('email_notifications');
+        $this->logger = Logger::channel('email_notifications');
     }
 
     /**

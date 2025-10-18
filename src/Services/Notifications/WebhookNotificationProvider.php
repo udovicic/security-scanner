@@ -22,7 +22,7 @@ class WebhookNotificationProvider implements NotificationProviderInterface
             ]
         ], $config);
 
-        $this->logger = new Logger('webhook_notifications');
+        $this->logger = Logger::channel('webhook_notifications');
     }
 
     public function send(string $recipient, array $template, array $context): bool

@@ -196,20 +196,48 @@ class Config
             'logging' => [
                 'channels' => [
                     'access' => [
-                        'path' => $this->env('LOG_ACCESS_PATH', '/var/log/security-scanner/access.log'),
+                        'path' => $this->env('LOG_ACCESS_PATH', __DIR__ . '/../../logs/access.log'),
                         'level' => 'info',
                     ],
                     'error' => [
-                        'path' => $this->env('LOG_ERROR_PATH', '/var/log/security-scanner/error.log'),
+                        'path' => $this->env('LOG_ERROR_PATH', __DIR__ . '/../../logs/error.log'),
                         'level' => 'error',
                     ],
                     'scheduler' => [
-                        'path' => $this->env('LOG_SCHEDULER_PATH', '/var/log/security-scanner/scheduler.log'),
+                        'path' => $this->env('LOG_SCHEDULER_PATH', __DIR__ . '/../../logs/scheduler.log'),
                         'level' => 'info',
                     ],
                     'security' => [
-                        'path' => $this->env('LOG_SECURITY_PATH', '/var/log/security-scanner/security.log'),
+                        'path' => $this->env('LOG_SECURITY_PATH', __DIR__ . '/../../logs/security.log'),
                         'level' => 'warning',
+                    ],
+                    'email_notifications' => [
+                        'path' => $this->env('LOG_EMAIL_PATH', __DIR__ . '/../../logs/email.log'),
+                        'level' => 'info',
+                    ],
+                    'sms_notifications' => [
+                        'path' => $this->env('LOG_SMS_PATH', __DIR__ . '/../../logs/sms.log'),
+                        'level' => 'info',
+                    ],
+                    'webhook_notifications' => [
+                        'path' => $this->env('LOG_WEBHOOK_PATH', __DIR__ . '/../../logs/webhook.log'),
+                        'level' => 'info',
+                    ],
+                    'notifications' => [
+                        'path' => $this->env('LOG_NOTIFICATIONS_PATH', __DIR__ . '/../../logs/notifications.log'),
+                        'level' => 'info',
+                    ],
+                    'templates' => [
+                        'path' => $this->env('LOG_TEMPLATES_PATH', __DIR__ . '/../../logs/templates.log'),
+                        'level' => 'info',
+                    ],
+                    'escalation' => [
+                        'path' => $this->env('LOG_ESCALATION_PATH', __DIR__ . '/../../logs/escalation.log'),
+                        'level' => 'info',
+                    ],
+                    'alert_escalation' => [
+                        'path' => $this->env('LOG_ALERT_ESCALATION_PATH', __DIR__ . '/../../logs/alert_escalation.log'),
+                        'level' => 'info',
                     ],
                 ],
             ],

@@ -12,7 +12,7 @@ class SecurityAuditor
     public function __construct(array $config = [])
     {
         $this->db = Database::getInstance();
-        $this->logger = new Logger('security_audit');
+        $this->logger = Logger::channel('security_audit');
 
         $this->config = array_merge([
             'enable_continuous_monitoring' => true,

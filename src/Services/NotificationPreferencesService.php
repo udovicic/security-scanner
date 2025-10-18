@@ -13,7 +13,7 @@ class NotificationPreferencesService
     public function __construct()
     {
         $this->db = Database::getInstance();
-        $this->logger = new Logger('notification_preferences');
+        $this->logger = Logger::channel('notification_preferences');
     }
 
     public function setWebsitePreferences(int $websiteId, array $preferences): bool

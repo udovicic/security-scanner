@@ -273,27 +273,49 @@ class WebsiteService
     /**
      * Bulk operations for websites
      */
-    public function bulkUpdateWebsites(array $websiteIds, array $updates): array
+    public function bulkUpdateWebsites($websiteIdsOrUpdates, ?array $updates = null): array
     {
         $results = [];
         $successCount = 0;
         $failureCount = 0;
 
-        foreach ($websiteIds as $websiteId) {
-            $result = $this->updateWebsite($websiteId, $updates);
-            $results[$websiteId] = $result;
+        // Determine which signature was used
+        if ($updates === null) {
+            // Single parameter: associative array with websiteId => updates
+            $websiteUpdates = $websiteIdsOrUpdates;
+            foreach ($websiteUpdates as $websiteId => $websiteSpecificUpdates) {
+                $result = $this->updateWebsite($websiteId, $websiteSpecificUpdates);
+                $results[$websiteId] = $result;
 
-            if ($result['success']) {
-                $successCount++;
-            } else {
-                $failureCount++;
+                if ($result['success']) {
+                    $successCount++;
+                } else {
+                    $failureCount++;
+                }
             }
+            $totalCount = count($websiteUpdates);
+        } else {
+            // Two parameters: apply same updates to multiple websites
+            $websiteIds = $websiteIdsOrUpdates;
+            foreach ($websiteIds as $websiteId) {
+                $result = $this->updateWebsite($websiteId, $updates);
+                $results[$websiteId] = $result;
+
+                if ($result['success']) {
+                    $successCount++;
+                } else {
+                    $failureCount++;
+                }
+            }
+            $totalCount = count($websiteIds);
         }
 
         return [
             'success' => $failureCount === 0,
+            'updated_count' => $successCount,
+            'failed_count' => $failureCount,
             'summary' => [
-                'total' => count($websiteIds),
+                'total' => $totalCount,
                 'successful' => $successCount,
                 'failed' => $failureCount
             ],
@@ -420,7 +442,7 @@ class WebsiteService
     {
         return $this->db->fetchAll(
             "SELECT wtc.*, at.name, at.description FROM website_test_config wtc
-             JOIN available_tests at ON wtc.test_name = at.name
+             JOIN available_tests at ON wtc.available_test_id = at.id
              WHERE wtc.website_id = ?",
             [$websiteId]
         );
@@ -528,6 +550,151 @@ class WebsiteService
                 'created_at' => date('Y-m-d H:i:s')
             ]);
         }
+    }
+
+    /**
+     * Get websites due for scanning
+     */
+    public function getWebsitesDueForScan(): array
+    {
+        return $this->db->fetchAll(
+            "SELECT * FROM websites
+             WHERE scan_enabled = 1
+             AND status = 'active'
+             AND (next_scan_at IS NULL OR next_scan_at <= NOW())
+             ORDER BY next_scan_at ASC"
+        );
+    }
+
+    /**
+     * Get active websites
+     */
+    public function getActiveWebsites(array $filters = []): array
+    {
+        $where = ["status = 'active'"];
+        $params = [];
+
+        if (!empty($filters['scan_enabled'])) {
+            $where[] = "scan_enabled = ?";
+            $params[] = (bool) $filters['scan_enabled'];
+        }
+
+        $sql = "SELECT * FROM websites WHERE " . implode(' AND ', $where) . " ORDER BY name";
+        return $this->db->fetchAll($sql, $params);
+    }
+
+    /**
+     * Search websites by various criteria
+     */
+    public function searchWebsites(string $query, array $filters = []): array
+    {
+        $where = ["(name LIKE ? OR url LIKE ? OR description LIKE ?)"];
+        $params = ["%{$query}%", "%{$query}%", "%{$query}%"];
+
+        if (!empty($filters['status'])) {
+            $where[] = "status = ?";
+            $params[] = $filters['status'];
+        }
+
+        $sql = "SELECT * FROM websites WHERE " . implode(' AND ', $where) . " ORDER BY name LIMIT 50";
+        return $this->db->fetchAll($sql, $params);
+    }
+
+    /**
+     * Perform health check on website
+     */
+    public function performHealthCheck(int $websiteId): array
+    {
+        $website = $this->getWebsiteById($websiteId);
+        if (!$website) {
+            return ['success' => false, 'error' => 'Website not found'];
+        }
+
+        try {
+            $ch = curl_init();
+            curl_setopt_array($ch, [
+                CURLOPT_URL => $website['url'],
+                CURLOPT_RETURNTRANSFER => true,
+                CURLOPT_TIMEOUT => 10,
+                CURLOPT_FOLLOWLOCATION => true,
+                CURLOPT_SSL_VERIFYPEER => false,
+                CURLOPT_USERAGENT => 'SecurityScanner/1.0'
+            ]);
+
+            $response = curl_exec($ch);
+            $httpCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
+            $responseTime = curl_getinfo($ch, CURLINFO_TOTAL_TIME);
+            curl_close($ch);
+
+            return [
+                'success' => true,
+                'http_code' => $httpCode,
+                'response_time' => $responseTime,
+                'is_accessible' => $httpCode >= 200 && $httpCode < 400,
+                'response_size' => strlen($response)
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage()
+            ];
+        }
+    }
+
+    /**
+     * Get website statistics
+     */
+    public function getWebsiteStatistics(int $websiteId): array
+    {
+        $stats = $this->db->fetchRow(
+            "SELECT
+                COUNT(DISTINCT te.id) as total_scans,
+                AVG(CASE WHEN tr.status = 'passed' THEN 100 ELSE 0 END) as avg_success_rate,
+                COUNT(CASE WHEN tr.status = 'failed' THEN 1 END) as failed_tests,
+                COUNT(CASE WHEN tr.status = 'passed' THEN 1 END) as passed_tests,
+                MAX(te.created_at) as last_scan_date
+             FROM test_executions te
+             LEFT JOIN test_results tr ON te.id = tr.test_execution_id
+             WHERE te.website_id = ?
+             GROUP BY te.website_id",
+            [$websiteId]
+        );
+
+        if (!$stats) {
+            return [
+                'total_scans' => 0,
+                'avg_success_rate' => 0,
+                'failed_tests' => 0,
+                'passed_tests' => 0,
+                'last_scan_date' => null
+            ];
+        }
+
+        return $stats;
+    }
+
+    /**
+     * Public wrapper for normalize URL method (for testing)
+     */
+    public function testNormalizeUrl(string $url): string
+    {
+        return $this->normalizeUrl($url);
+    }
+
+    /**
+     * Public wrapper for calculate next scan time (for testing)
+     */
+    public function testCalculateNextScanTime(string $frequency): string
+    {
+        return $this->calculateNextScanTime($frequency);
+    }
+
+    /**
+     * Public wrapper for validate URL accessibility (for testing)
+     */
+    public function testValidateUrlAccessibility(string $url): bool
+    {
+        return $this->validateUrlAccessibility($url);
     }
 
     /**

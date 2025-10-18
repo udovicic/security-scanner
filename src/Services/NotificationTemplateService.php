@@ -14,7 +14,7 @@ class NotificationTemplateService
     public function __construct()
     {
         $this->db = Database::getInstance();
-        $this->logger = new Logger('notification_templates');
+        $this->logger = Logger::channel('notification_templates');
         $this->initializeDefaultTemplates();
     }
 

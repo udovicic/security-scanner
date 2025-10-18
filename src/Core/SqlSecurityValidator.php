@@ -6,11 +6,22 @@ class SqlSecurityValidator
 {
     private array $dangerousPatterns;
     private array $allowedFunctions;
-    private Logger $logger;
+    private $logger;
 
     public function __construct()
     {
-        $this->logger = new Logger('sql_security');
+        try {
+            $this->logger = Logger::channel('sql_security');
+        } catch (\Exception $e) {
+            // Fallback logger for testing
+            $this->logger = new class {
+                public function debug($message, $context = []) {}
+                public function info($message, $context = []) {}
+                public function warning($message, $context = []) {}
+                public function error($message, $context = []) {}
+                public function critical($message, $context = []) {}
+            };
+        }
         $this->initializeDangerousPatterns();
         $this->initializeAllowedFunctions();
     }

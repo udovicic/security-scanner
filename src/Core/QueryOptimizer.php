@@ -13,7 +13,7 @@ class QueryOptimizer
     public function __construct(array $config = [])
     {
         $this->db = Database::getInstance();
-        $this->logger = new Logger('query_optimizer');
+        $this->logger = Logger::channel('query_optimizer');
 
         $this->config = array_merge([
             'enable_query_cache' => true,

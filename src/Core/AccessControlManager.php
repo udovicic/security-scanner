@@ -13,7 +13,7 @@ class AccessControlManager
     public function __construct()
     {
         $this->db = Database::getInstance();
-        $this->logger = new Logger('access_control');
+        $this->logger = Logger::channel('access_control');
         $this->initializeRoleHierarchy();
         $this->initializePermissions();
         $this->initializeRolePermissions();

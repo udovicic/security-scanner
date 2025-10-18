@@ -21,7 +21,7 @@ class XssProtection
             'csp_nonce_length' => 32
         ], $config);
 
-        $this->logger = new Logger('xss_protection');
+        $this->logger = Logger::channel('xss_protection');
         $this->initializeDefaults();
     }
 

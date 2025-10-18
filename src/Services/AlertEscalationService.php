@@ -16,7 +16,7 @@ class AlertEscalationService
     {
         $this->db = Database::getInstance();
         $this->notificationService = $notificationService;
-        $this->logger = new Logger('alert_escalation');
+        $this->logger = Logger::channel('alert_escalation');
 
         $this->config = array_merge([
             'escalation_thresholds' => [

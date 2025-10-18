@@ -21,7 +21,7 @@ class SmsNotificationProvider implements NotificationProviderInterface
             'test_mode' => false
         ], $config);
 
-        $this->logger = new Logger('sms_notifications');
+        $this->logger = Logger::channel('sms_notifications');
     }
 
     public function send(string $recipient, array $template, array $context): bool

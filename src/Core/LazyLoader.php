@@ -8,13 +8,24 @@ class LazyLoader
     private array $factories = [];
     private array $instances = [];
     private array $singletons = [];
-    private Logger $logger;
+    private $logger;
     private array $loadTimes = [];
     private array $dependencies = [];
 
     private function __construct()
     {
-        $this->logger = Logger::getInstance('lazy_loading');
+        // Initialize logger with fallback for testing
+        try {
+            $this->logger = Logger::channel('lazy_loading');
+        } catch (\Exception $e) {
+            // Fallback to a basic logger for testing
+            $this->logger = new class {
+                public function debug($message, $context = []) {}
+                public function info($message, $context = []) {}
+                public function warning($message, $context = []) {}
+                public function error($message, $context = []) {}
+            };
+        }
     }
 
     public static function getInstance(): LazyLoader

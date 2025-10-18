@@ -13,7 +13,7 @@ class SecurityEventLogger
     public function __construct(array $config = [])
     {
         $this->db = Database::getInstance();
-        $this->logger = new Logger('security_events');
+        $this->logger = Logger::channel('security_events');
 
         $this->config = array_merge([
             'enable_real_time_alerts' => true,

@@ -462,6 +462,27 @@ class Container
     }
 
     /**
+     * Register test-specific services
+     */
+    public function registerTestServices(): void
+    {
+        // Override some services for testing
+        $this->singleton('test.database', function() {
+            $config = Config::getInstance();
+            $config->set('database.default', 'testing');
+            return Database::getInstance();
+        });
+
+        $this->singleton('test.cache', function() {
+            return new \SecurityScanner\Core\ArrayCache();
+        });
+
+        $this->alias('cache', 'test.cache');
+
+        $this->logger->info('Test services registered in container');
+    }
+
+    /**
      * Call a method with dependency injection
      */
     public function call(callable $callback, array $parameters = [])
