@@ -409,9 +409,12 @@ class AlertEscalationService
             return $carry && ($result['success'] ?? false);
         }, true);
 
+        // Ensure boolean is properly converted for database
+        $notificationsSent = $success ? 1 : 0;
+
         $this->db->update('alert_escalations', [
             'notification_results' => json_encode($notificationResults),
-            'notifications_sent' => $success,
+            'notifications_sent' => $notificationsSent,
             'updated_at' => date('Y-m-d H:i:s')
         ], ['id' => $escalationId]);
     }

@@ -160,6 +160,11 @@ if (!function_exists('createTestExecution')) {
 
         $data = array_merge($defaults, $attributes);
 
+        // Convert boolean values to integers for database compatibility
+        if (isset($data['success']) && is_bool($data['success'])) {
+            $data['success'] = $data['success'] ? 1 : 0;
+        }
+
         try {
             $database = SecurityScanner\Core\Database::getInstance();
             $id = $database->insert('test_executions', $data);
