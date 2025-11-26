@@ -8,7 +8,7 @@ class Config
     private array $config = [];
     private EnvLoader $envLoader;
 
-    private function __construct(string $basePath = null)
+    private function __construct(?string $basePath = null)
     {
         $basePath = $basePath ?? __DIR__ . '/../..';
 
@@ -24,7 +24,7 @@ class Config
         $this->loadConfigurations();
     }
 
-    public static function getInstance(string $basePath = null): Config
+    public static function getInstance(?string $basePath = null): Config
     {
         if (self::$instance === null) {
             self::$instance = new self($basePath);
@@ -95,7 +95,7 @@ class Config
 
     public function isDebug(): bool
     {
-        return (bool) $this->env('APP_DEBUG', false);
+        return (bool) $this->get('app.debug', $this->env('APP_DEBUG', false));
     }
 
     public function isDevelopment(): bool

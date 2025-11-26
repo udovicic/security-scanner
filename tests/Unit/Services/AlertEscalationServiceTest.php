@@ -143,7 +143,7 @@ class AlertEscalationServiceTest extends TestCase
                 'website_id' => $website['id'],
                 'test_name' => 'availability_test',
                 'status' => 'completed',
-                'success' => false,
+                'success' => 0,
                 'created_at' => $recentTime,
                 'updated_at' => $recentTime
             ]);
@@ -486,7 +486,7 @@ class AlertEscalationServiceTest extends TestCase
                 'website_id' => $website['id'],
                 'test_name' => 'test',
                 'status' => 'completed',
-                'success' => $success,
+                'success' => $success ? 1 : 0,
                 'created_at' => date('Y-m-d H:i:s'),
                 'updated_at' => date('Y-m-d H:i:s')
             ]);
@@ -512,7 +512,7 @@ class AlertEscalationServiceTest extends TestCase
                 'website_id' => $website['id'],
                 'test_name' => 'test',
                 'status' => 'completed',
-                'success' => false,
+                'success' => 0,
                 'created_at' => $recentTime,
                 'updated_at' => $recentTime
             ]);
@@ -524,7 +524,7 @@ class AlertEscalationServiceTest extends TestCase
             'website_id' => $website['id'],
             'test_name' => 'test',
             'status' => 'completed',
-            'success' => false,
+            'success' => 0,
             'created_at' => $oldTime,
             'updated_at' => $oldTime
         ]);

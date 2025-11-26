@@ -144,13 +144,13 @@ class ArchiveService
                     $placeholders = str_repeat('?,', count($scanIds) - 1) . '?';
 
                     // First delete related test_executions
-                    $this->db->query(
+                    $this->db->execute(
                         "DELETE FROM test_executions WHERE scan_id IN ({$placeholders})",
                         $scanIds
                     );
 
                     // Then delete scan_results
-                    $deleted = $this->db->query(
+                    $deleted = $this->db->execute(
                         "DELETE FROM scan_results WHERE id IN ({$placeholders})",
                         $scanIds
                     );
@@ -205,7 +205,7 @@ class ArchiveService
                     $executionIds = array_column($orphanedExecutions, 'id');
                     $placeholders = str_repeat('?,', count($executionIds) - 1) . '?';
 
-                    $deleted = $this->db->query(
+                    $deleted = $this->db->execute(
                         "DELETE FROM test_executions WHERE id IN ({$placeholders})",
                         $executionIds
                     );
@@ -255,7 +255,7 @@ class ArchiveService
                     $logIds = array_column($oldLogs, 'id');
                     $placeholders = str_repeat('?,', count($logIds) - 1) . '?';
 
-                    $deleted = $this->db->query(
+                    $deleted = $this->db->execute(
                         "DELETE FROM scheduler_log WHERE id IN ({$placeholders})",
                         $logIds
                     );
@@ -305,7 +305,7 @@ class ArchiveService
                     $logIds = array_column($oldLogs, 'id');
                     $placeholders = str_repeat('?,', count($logIds) - 1) . '?';
 
-                    $deleted = $this->db->query(
+                    $deleted = $this->db->execute(
                         "DELETE FROM notification_log WHERE id IN ({$placeholders})",
                         $logIds
                     );
@@ -357,7 +357,7 @@ class ArchiveService
                     $metricIds = array_column($oldMetrics, 'id');
                     $placeholders = str_repeat('?,', count($metricIds) - 1) . '?';
 
-                    $deleted = $this->db->query(
+                    $deleted = $this->db->execute(
                         "DELETE FROM scan_metrics WHERE id IN ({$placeholders})",
                         $metricIds
                     );
@@ -387,7 +387,7 @@ class ArchiveService
 
         try {
             // Clean up test_executions without parent scan_results
-            $orphanedExecutions = $this->db->query(
+            $orphanedExecutions = $this->db->execute(
                 "DELETE te FROM test_executions te
                  LEFT JOIN scan_results sr ON te.scan_id = sr.id
                  WHERE sr.id IS NULL"
@@ -400,7 +400,7 @@ class ArchiveService
             $results['records_deleted'] += $orphanedExecutions;
 
             // Clean up website_test_config for deleted websites
-            $orphanedConfigs = $this->db->query(
+            $orphanedConfigs = $this->db->execute(
                 "DELETE wtc FROM website_test_config wtc
                  LEFT JOIN websites w ON wtc.website_id = w.id
                  WHERE w.id IS NULL"
@@ -413,7 +413,7 @@ class ArchiveService
             $results['records_deleted'] += $orphanedConfigs;
 
             // Clean up scan_metrics for deleted websites
-            $orphanedMetrics = $this->db->query(
+            $orphanedMetrics = $this->db->execute(
                 "DELETE sm FROM scan_metrics sm
                  LEFT JOIN websites w ON sm.website_id = w.id
                  WHERE w.id IS NULL"
@@ -502,7 +502,7 @@ class ArchiveService
     /**
      * Restore data from archive
      */
-    public function restoreFromArchive(string $archiveFile, string $targetTable = null): array
+    public function restoreFromArchive(string $archiveFile, ?string $targetTable = null): array
     {
         $result = [
             'success' => false,

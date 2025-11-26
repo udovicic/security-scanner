@@ -57,16 +57,13 @@ try {
         throw new \Exception('Database connection test failed');
     }
 
-    // Create minimal test tables if they don't exist
+    // Ensure persistent test websites exist in the websites table
+    $database->execute("SET SESSION sql_mode = ''");
     $database->execute("
-        CREATE TABLE IF NOT EXISTS test_websites (
-            id INT AUTO_INCREMENT PRIMARY KEY,
-            name VARCHAR(255) NOT NULL,
-            url VARCHAR(500) NOT NULL,
-            status VARCHAR(50) DEFAULT 'active',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-        )
+        INSERT IGNORE INTO websites (id, name, url, status, created_at, updated_at) VALUES
+        (1, 'Test Website 1', 'https://example1.com', 'active', NOW(), NOW()),
+        (2, 'Test Website 2', 'https://example2.com', 'active', NOW(), NOW()),
+        (999999, 'Test Website 999999', 'https://example999999.com', 'active', NOW(), NOW())
     ");
 
     $database->execute("
@@ -106,15 +103,46 @@ function cleanupTestData(): void
     try {
         $database = SecurityScanner\Core\Database::getInstance();
 
-        $testTables = ['test_websites', 'test_executions', 'test_results'];
+        // Disable foreign key checks to allow truncation
+        $database->execute("SET FOREIGN_KEY_CHECKS = 0");
 
-        foreach ($testTables as $table) {
-            try {
-                $database->execute("TRUNCATE TABLE `{$table}`");
-            } catch (Exception $e) {
-                // Table might not exist, ignore
+        // Clean all test-related tables but preserve persistent test data
+        try {
+            // Clean tables without foreign key dependencies first
+            $database->execute("DELETE FROM notifications WHERE website_id NOT IN (1, 2, 999999)");
+            $database->execute("DELETE FROM alert_escalations WHERE website_id NOT IN (1, 2, 999999)");
+            $database->execute("DELETE FROM scan_metrics WHERE website_id NOT IN (1, 2, 999999)");
+            $database->execute("DELETE FROM scan_results WHERE website_id NOT IN (1, 2, 999999)");
+
+            // Clean job queue (not tied to websites)
+            $database->execute("DELETE FROM job_queue WHERE id > 0");
+            $database->execute("DELETE FROM queue_log WHERE id > 0");
+
+            // Clean test executions and results
+            $database->execute("DELETE FROM test_results WHERE execution_id NOT IN (SELECT id FROM test_executions WHERE website_id IN (1, 2, 999999))");
+            $database->execute("DELETE FROM test_executions WHERE website_id NOT IN (1, 2, 999999)");
+
+            // Clean websites (but keep persistent ones)
+            $database->execute("DELETE FROM websites WHERE id NOT IN (1, 2, 999999)");
+            $database->execute("DELETE FROM website_test_config WHERE website_id NOT IN (1, 2, 999999)");
+        } catch (Exception $e) {
+            // Fallback to truncate if delete fails
+            $testTables = [
+                'queue_log', 'job_queue', 'notifications', 'alert_escalations',
+                'scan_metrics', 'scan_results', 'test_results', 'test_executions',
+                'websites', 'website_test_config', 'backup_log', 'database_backups'
+            ];
+            foreach ($testTables as $table) {
+                try {
+                    $database->execute("TRUNCATE TABLE `{$table}`");
+                } catch (Exception $e) {
+                    // Table might not exist, ignore
+                }
             }
         }
+
+        // Re-enable foreign key checks
+        $database->execute("SET FOREIGN_KEY_CHECKS = 1");
 
     } catch (Exception $e) {
         error_log('Failed to cleanup test data: ' . $e->getMessage());
@@ -137,7 +165,7 @@ if (!function_exists('createTestWebsite')) {
 
         try {
             $database = SecurityScanner\Core\Database::getInstance();
-            $id = $database->insert('test_websites', $data);
+            $id = $database->insert('websites', $data);
             return array_merge($data, ['id' => $id]);
         } catch (Exception $e) {
             // Return mock data for testing

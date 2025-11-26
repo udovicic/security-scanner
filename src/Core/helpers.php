@@ -161,7 +161,7 @@ if (!function_exists('microtime_diff')) {
     /**
      * Calculate difference between two microtime values in milliseconds
      */
-    function microtime_diff(float $start, float $end = null): float
+    function microtime_diff(float $start, ?float $end = null): float
     {
         $end = $end ?? microtime(true);
         return round(($end - $start) * 1000, 2);

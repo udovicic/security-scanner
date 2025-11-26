@@ -95,7 +95,29 @@ class MetricsService
             return $cached;
         }
 
+        $totalWebsites = (int)$this->db->fetchColumn("SELECT COUNT(*) FROM websites");
+        $activeWebsites = (int)$this->db->fetchColumn("SELECT COUNT(*) FROM websites WHERE status = 'active'");
+        $totalExecutions = (int)$this->db->fetchColumn("SELECT COUNT(*) FROM test_executions");
+
+        $successfulTests = (int)$this->db->fetchColumn("SELECT COUNT(*) FROM test_results WHERE status = 'passed'");
+        $totalTests = (int)$this->db->fetchColumn("SELECT COUNT(*) FROM test_results");
+        $overallSuccessRate = $totalTests > 0 ? round(($successfulTests / $totalTests) * 100, 2) : 0.0;
+
+        $recentFailures = (int)$this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 24 HOUR)"
+        );
+
+        $avgResponseTime = (float)$this->db->fetchColumn(
+            "SELECT AVG(execution_time) FROM test_results WHERE execution_time IS NOT NULL"
+        );
+
         $metrics = [
+            'total_websites' => $totalWebsites,
+            'active_websites' => $activeWebsites,
+            'total_executions' => $totalExecutions,
+            'overall_success_rate' => $overallSuccessRate,
+            'recent_failures' => $recentFailures,
+            'average_response_time' => round($avgResponseTime, 2),
             'current_status' => $this->getCurrentStatus(),
             'today_summary' => $this->getTodaySummary(),
             'recent_activity' => $this->getRecentActivity(),
@@ -744,5 +766,370 @@ class MetricsService
              ORDER BY period DESC",
             [$days]
         );
+    }
+
+    /**
+     * Collect website-specific metrics
+     */
+    public function collectWebsiteMetrics(int $websiteId): array
+    {
+        $totalTests = (int)$this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ?",
+            [$websiteId]
+        );
+
+        $passedTests = (int)$this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ? AND tr.status = 'passed'",
+            [$websiteId]
+        );
+
+        $failedTests = (int)$this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ? AND tr.status = 'failed'",
+            [$websiteId]
+        );
+
+        $avgExecutionTime = (float)$this->db->fetchColumn(
+            "SELECT AVG(tr.execution_time) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ? AND tr.execution_time IS NOT NULL",
+            [$websiteId]
+        );
+
+        $lastScanAt = $this->db->fetchColumn(
+            "SELECT MAX(te.created_at) FROM test_executions te WHERE te.website_id = ?",
+            [$websiteId]
+        );
+
+        $successRate = $totalTests > 0 ? ($passedTests / $totalTests) * 100 : 0.0;
+
+        return [
+            'website_id' => $websiteId,
+            'total_tests' => $totalTests,
+            'passed_tests' => $passedTests,
+            'failed_tests' => $failedTests,
+            'success_rate' => round($successRate, 2),
+            'average_execution_time' => round($avgExecutionTime, 2),
+            'last_scan_at' => $lastScanAt
+        ];
+    }
+
+    /**
+     * Get performance metrics
+     */
+    public function getPerformanceMetrics(int $websiteId, int $days = 7): array
+    {
+        $avgExecutionTime = (float)$this->db->fetchColumn(
+            "SELECT AVG(tr.execution_time) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ? AND tr.execution_time IS NOT NULL",
+            [$websiteId]
+        );
+
+        $minExecutionTime = (float)$this->db->fetchColumn(
+            "SELECT MIN(tr.execution_time) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ? AND tr.execution_time IS NOT NULL",
+            [$websiteId]
+        );
+
+        $maxExecutionTime = (float)$this->db->fetchColumn(
+            "SELECT MAX(tr.execution_time) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ? AND tr.execution_time IS NOT NULL",
+            [$websiteId]
+        );
+
+        $totalTestsRun = (int)$this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ?",
+            [$websiteId]
+        );
+
+        return [
+            'average_execution_time' => round($avgExecutionTime, 2),
+            'min_execution_time' => round($minExecutionTime, 2),
+            'max_execution_time' => round($maxExecutionTime, 2),
+            'total_tests_run' => $totalTestsRun
+        ];
+    }
+
+    /**
+     * Get security metrics
+     */
+    public function getSecurityMetrics(int $days = 30): array
+    {
+        return [
+            'total_vulnerabilities' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM test_results WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            ),
+            'critical_issues' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM test_results WHERE status = 'failed' AND severity = 'critical' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            ),
+            'resolved_issues' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM test_results WHERE status = 'passed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            )
+        ];
+    }
+
+    /**
+     * Get historical metrics
+     */
+    public function getHistoricalMetrics(int $websiteId, $daysOrStartDate = 30, $endDate = null): array
+    {
+        // Handle date range parameters
+        if (is_string($daysOrStartDate) && $endDate) {
+            $dailyMetrics = $this->db->fetchAll(
+                "SELECT
+                    DATE(created_at) as date,
+                    COUNT(*) as total_scans,
+                    SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful,
+                    SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                    AVG(execution_time) as avg_time
+                 FROM scan_results
+                 WHERE website_id = ? AND DATE(created_at) BETWEEN ? AND ?
+                 GROUP BY DATE(created_at)
+                 ORDER BY date DESC",
+                [$websiteId, $daysOrStartDate, $endDate]
+            );
+
+            return [
+                'date_range' => [
+                    'start' => $daysOrStartDate,
+                    'end' => $endDate
+                ],
+                'daily_metrics' => $dailyMetrics
+            ];
+        }
+
+        // Handle days parameter
+        $days = is_int($daysOrStartDate) ? $daysOrStartDate : 30;
+
+        return $this->db->fetchAll(
+            "SELECT
+                DATE(created_at) as date,
+                COUNT(*) as total_scans,
+                SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as successful,
+                SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END) as failed,
+                AVG(execution_time) as avg_time
+             FROM scan_results
+             WHERE website_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             GROUP BY DATE(created_at)
+             ORDER BY date DESC",
+            [$websiteId, $days]
+        );
+    }
+
+    /**
+     * Get test failure analysis
+     */
+    public function getTestFailureAnalysis(int $days = 7): array
+    {
+        return $this->db->fetchAll(
+            "SELECT
+                test_name,
+                COUNT(*) as failure_count,
+                COUNT(DISTINCT website_id) as affected_websites
+             FROM test_results
+             WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)
+             GROUP BY test_name
+             ORDER BY failure_count DESC
+             LIMIT 10",
+            [$days]
+        );
+    }
+
+    /**
+     * Calculate uptime metrics
+     */
+    public function calculateUptimeMetrics(int $websiteId, int $days = 30): array
+    {
+        $totalScans = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM scan_results WHERE website_id = ? AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$websiteId, $days]
+        );
+
+        $successfulScans = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM scan_results WHERE website_id = ? AND status = 'completed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$websiteId, $days]
+        );
+
+        $uptime = $totalScans > 0 ? ($successfulScans / $totalScans) * 100 : 0;
+
+        return [
+            'website_id' => $websiteId,
+            'uptime_percentage' => round($uptime, 2),
+            'total_scans' => $totalScans,
+            'successful_scans' => $successfulScans,
+            'failed_scans' => $totalScans - $successfulScans,
+            'period_days' => $days
+        ];
+    }
+
+    /**
+     * Export metrics to CSV
+     */
+    public function exportMetricsToCsv($metricsOrWebsiteId, string $filename = 'metrics.csv'): string
+    {
+        // If integer, fetch metrics for that website
+        if (is_int($metricsOrWebsiteId)) {
+            $metrics = $this->db->fetchAll(
+                "SELECT test_name as 'Test Name', status as 'Status', execution_time as 'Execution Time'
+                 FROM test_results
+                 WHERE website_id = ?
+                 ORDER BY created_at DESC",
+                [$metricsOrWebsiteId]
+            );
+        } else {
+            $metrics = $metricsOrWebsiteId;
+        }
+
+        $csv = fopen('php://temp', 'r+');
+
+        if (!empty($metrics)) {
+            fputcsv($csv, array_keys($metrics[0]));
+
+            foreach ($metrics as $row) {
+                fputcsv($csv, $row);
+            }
+        }
+
+        rewind($csv);
+        $csvContent = stream_get_contents($csv);
+        fclose($csv);
+
+        return $csvContent;
+    }
+
+    /**
+     * Get comparative metrics
+     */
+    public function getComparativeMetrics(array $websiteIds, int $days = 30): array
+    {
+        $metrics = [];
+
+        foreach ($websiteIds as $websiteId) {
+            $metrics[] = $this->collectWebsiteMetrics($websiteId);
+        }
+
+        return $metrics;
+    }
+
+    /**
+     * Get alert metrics
+     */
+    public function getAlertMetrics(int $days = 7): array
+    {
+        return [
+            'total_alerts' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM alert_escalations WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            ),
+            'active_alerts' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM alert_escalations WHERE status = 'active' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            ),
+            'resolved_alerts' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM alert_escalations WHERE status = 'resolved' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            )
+        ];
+    }
+
+    /**
+     * Calculate cost metrics
+     */
+    public function calculateCostMetrics(int $days = 30): array
+    {
+        $totalScans = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM scan_results WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        );
+
+        $avgCostPerScan = 0.05;
+        $totalCost = $totalScans * $avgCostPerScan;
+
+        return [
+            'total_scans' => $totalScans,
+            'cost_per_scan' => $avgCostPerScan,
+            'total_cost' => $totalCost,
+            'period_days' => $days
+        ];
+    }
+
+    /**
+     * Get real-time metrics
+     */
+    public function getRealTimeMetrics(): array
+    {
+        return [
+            'active_scans' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM scan_results WHERE status = 'running'"
+            ),
+            'queued_scans' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM test_executions WHERE status IN ('pending', 'queued')"
+            ),
+            'recent_failures' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM scan_results WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)"
+            ),
+            'system_health' => $this->calculateSystemHealthStatus()
+        ];
+    }
+
+    /**
+     * Calculate system health status
+     */
+    private function calculateSystemHealthStatus(): string
+    {
+        $failureRate = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM scan_results WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)"
+        );
+
+        if ($failureRate > 10) {
+            return 'unhealthy';
+        } elseif ($failureRate > 5) {
+            return 'degraded';
+        }
+
+        return 'healthy';
+    }
+
+    /**
+     * Aggregate system metrics
+     */
+    public function aggregateSystemMetrics(int $days = 7): array
+    {
+        return [
+            'performance' => $this->getPerformanceMetrics($days),
+            'security' => $this->getSecurityMetrics($days),
+            'alerts' => $this->getAlertMetrics($days),
+            'costs' => $this->calculateCostMetrics($days)
+        ];
+    }
+
+    /**
+     * Generate metrics report
+     */
+    public function generateMetricsReport(int $days = 30): array
+    {
+        return [
+            'period' => [
+                'days' => $days,
+                'start_date' => date('Y-m-d', strtotime("-{$days} days")),
+                'end_date' => date('Y-m-d')
+            ],
+            'summary' => $this->aggregateSystemMetrics($days),
+            'top_failures' => $this->getTestFailureAnalysis($days),
+            'generated_at' => date('Y-m-d H:i:s')
+        ];
     }
 }

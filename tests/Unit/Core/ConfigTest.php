@@ -7,7 +7,7 @@ use SecurityScanner\Core\Config;
 
 class ConfigTest extends TestCase
 {
-    private Config $config;
+    protected Config $config;
 
     protected function setUp(): void
     {

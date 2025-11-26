@@ -730,4 +730,387 @@ class BackupService
             'scheduled_for' => date('Y-m-d H:i:s', time() + $delay)
         ];
     }
+
+    /**
+     * Create database backup (alias for createBackup)
+     */
+    public function createDatabaseBackup(array $options = []): array
+    {
+        return $this->createBackup('database', $options);
+    }
+
+    /**
+     * Restore database backup (alias for restoreBackup)
+     */
+    public function restoreDatabaseBackup(string $backupFile, array $options = []): array
+    {
+        return $this->restoreBackup($backupFile, $options);
+    }
+
+    /**
+     * Delete a backup file
+     */
+    public function deleteBackup(string $backupFile): bool
+    {
+        $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
+
+        if (!file_exists($backupPath)) {
+            return false;
+        }
+
+        if (!is_file($backupPath)) {
+            return false;
+        }
+
+        $deleted = unlink($backupPath);
+
+        if ($deleted) {
+            $this->logBackupActivity('backup_deleted', [
+                'backup_file' => $backupFile,
+                'path' => $backupPath
+            ]);
+        }
+
+        return $deleted;
+    }
+
+    /**
+     * Schedule automatic backup
+     */
+    public function scheduleAutomaticBackup($scheduleOrType = 'full', string $frequency = 'daily', array $options = []): array
+    {
+        // Handle both old signature (string, string, array) and new signature (array)
+        if (is_array($scheduleOrType)) {
+            $schedule = $scheduleOrType;
+            $backupType = $schedule['backup_type'] ?? 'full';
+            $frequency = $schedule['frequency'] ?? 'daily';
+
+            $result = $this->scheduleBackup($backupType, $frequency);
+            $result['schedule_id'] = $result['job_id'] ?? null;
+            return $result;
+        }
+
+        return $this->scheduleBackup($scheduleOrType, $frequency);
+    }
+
+    /**
+     * Import backup configuration
+     */
+    public function importBackupConfiguration(array $config): array
+    {
+        $imported = 0;
+        $failed = 0;
+        $errors = [];
+
+        foreach ($config as $key => $value) {
+            if (isset($this->config[$key])) {
+                $this->config[$key] = $value;
+                $imported++;
+            } else {
+                $failed++;
+                $errors[] = "Unknown configuration key: {$key}";
+            }
+        }
+
+        $this->logBackupActivity('configuration_imported', [
+            'imported' => $imported,
+            'failed' => $failed,
+            'errors' => $errors
+        ]);
+
+        return [
+            'success' => $failed === 0,
+            'imported' => $imported,
+            'failed' => $failed,
+            'errors' => $errors
+        ];
+    }
+
+    /**
+     * Get information about a backup file
+     */
+    public function getBackupInfo(string $backupFile): array
+    {
+        $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
+
+        if (!file_exists($backupPath)) {
+            return [
+                'error' => 'Backup file not found',
+                'filename' => $backupFile
+            ];
+        }
+
+        $stat = stat($backupPath);
+        $checksum = md5_file($backupPath);
+
+        return [
+            'filename' => basename($backupFile),
+            'path' => $backupPath,
+            'size' => $stat['size'],
+            'created_at' => date('Y-m-d H:i:s', $stat['ctime']),
+            'modified_at' => date('Y-m-d H:i:s', $stat['mtime']),
+            'checksum' => $checksum,
+            'readable' => is_readable($backupPath)
+        ];
+    }
+
+    /**
+     * Verify backup file integrity
+     */
+    public function verifyBackupIntegrity(string $backupFile): array
+    {
+        $info = $this->getBackupInfo($backupFile);
+
+        if (isset($info['error'])) {
+            return [
+                'valid' => false,
+                'error' => $info['error']
+            ];
+        }
+
+        $valid = $info['readable'] && $info['size'] > 0;
+
+        return [
+            'valid' => $valid,
+            'checksum' => $info['checksum'],
+            'size' => $info['size'],
+            'created_at' => $info['created_at']
+        ];
+    }
+
+    /**
+     * Compress a backup file
+     */
+    public function compressBackup(string $backupFile): array
+    {
+        $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
+
+        if (!file_exists($backupPath)) {
+            return [
+                'success' => false,
+                'error' => 'Backup file not found'
+            ];
+        }
+
+        $compressedPath = $backupPath . '.gz';
+
+        $fp = gzopen($compressedPath, 'wb9');
+        if (!$fp) {
+            return [
+                'success' => false,
+                'error' => 'Failed to create compressed file'
+            ];
+        }
+
+        $file = fopen($backupPath, 'rb');
+        while (!feof($file)) {
+            gzwrite($fp, fread($file, 1024 * 512));
+        }
+        fclose($file);
+        gzclose($fp);
+
+        $originalSize = filesize($backupPath);
+        $compressedSize = filesize($compressedPath);
+
+        $this->logBackupActivity('backup_compressed', [
+            'original_file' => $backupFile,
+            'compressed_file' => basename($compressedPath),
+            'original_size' => $originalSize,
+            'compressed_size' => $compressedSize,
+            'compression_ratio' => round((1 - ($compressedSize / $originalSize)) * 100, 2)
+        ]);
+
+        return [
+            'success' => true,
+            'compressed_file' => $compressedPath,
+            'original_size' => $originalSize,
+            'compressed_size' => $compressedSize,
+            'compression_ratio' => round((1 - ($compressedSize / $originalSize)) * 100, 2)
+        ];
+    }
+
+    /**
+     * Decompress a backup file
+     */
+    public function decompressBackup(string $compressedFile): array
+    {
+        $compressedPath = $this->config['backup_path'] . '/' . basename($compressedFile);
+
+        if (!file_exists($compressedPath)) {
+            return [
+                'success' => false,
+                'error' => 'Compressed file not found'
+            ];
+        }
+
+        $decompressedPath = preg_replace('/\.gz$/', '', $compressedPath);
+
+        $gz = gzopen($compressedPath, 'rb');
+        if (!$gz) {
+            return [
+                'success' => false,
+                'error' => 'Failed to open compressed file'
+            ];
+        }
+
+        $fp = fopen($decompressedPath, 'wb');
+        while (!gzeof($gz)) {
+            fwrite($fp, gzread($gz, 1024 * 512));
+        }
+        fclose($fp);
+        gzclose($gz);
+
+        $this->logBackupActivity('backup_decompressed', [
+            'compressed_file' => $compressedFile,
+            'decompressed_file' => basename($decompressedPath)
+        ]);
+
+        return [
+            'success' => true,
+            'decompressed_file' => $decompressedPath,
+            'size' => filesize($decompressedPath)
+        ];
+    }
+
+    /**
+     * Get backup health status
+     */
+    public function getBackupHealthStatus(): array
+    {
+        $backups = $this->listBackups();
+        $totalBackups = count($backups);
+
+        $healthScore = 100;
+        $issues = [];
+
+        if ($totalBackups === 0) {
+            $healthScore = 0;
+            $issues[] = 'No backups found';
+        }
+
+        $lastBackupTime = $this->getLastBackupTime();
+        if ($lastBackupTime) {
+            $hoursSinceLastBackup = (time() - strtotime($lastBackupTime)) / 3600;
+            if ($hoursSinceLastBackup > 48) {
+                $healthScore -= 30;
+                $issues[] = 'Last backup is older than 48 hours';
+            }
+        } else {
+            $healthScore -= 50;
+            $issues[] = 'No backup history found';
+        }
+
+        return [
+            'health_score' => max(0, $healthScore),
+            'total_backups' => $totalBackups,
+            'last_backup_time' => $lastBackupTime,
+            'issues' => $issues,
+            'status' => $healthScore >= 70 ? 'healthy' : ($healthScore >= 40 ? 'warning' : 'critical')
+        ];
+    }
+
+    /**
+     * Get backup schedule information
+     */
+    public function getBackupSchedule(): array
+    {
+        $schedule = $this->db->fetchAll(
+            "SELECT * FROM job_queue WHERE job_type = 'backup' ORDER BY scheduled_at ASC"
+        );
+
+        return [
+            'scheduled_backups' => $schedule,
+            'next_backup' => $schedule[0] ?? null,
+            'total_scheduled' => count($schedule)
+        ];
+    }
+
+    /**
+     * Get a preview of what would be restored
+     */
+    public function getRestorePreview(string $backupFile): array
+    {
+        $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
+
+        if (!file_exists($backupPath)) {
+            return [
+                'success' => false,
+                'error' => 'Backup file not found'
+            ];
+        }
+
+        $info = $this->getBackupInfo($backupFile);
+
+        return [
+            'success' => true,
+            'backup_file' => $backupFile,
+            'size' => $info['size'],
+            'created_at' => $info['created_at'],
+            'warning' => 'This will replace all current data in the database',
+            'estimated_duration' => ceil($info['size'] / (1024 * 1024)) . ' minutes'
+        ];
+    }
+
+    /**
+     * Validate a backup file
+     */
+    public function validateBackupFile(string $backupFile): array
+    {
+        $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
+
+        $validation = [
+            'valid' => true,
+            'errors' => [],
+            'warnings' => []
+        ];
+
+        if (!file_exists($backupPath)) {
+            $validation['valid'] = false;
+            $validation['errors'][] = 'Backup file does not exist';
+            return $validation;
+        }
+
+        if (!is_readable($backupPath)) {
+            $validation['valid'] = false;
+            $validation['errors'][] = 'Backup file is not readable';
+        }
+
+        $size = filesize($backupPath);
+        if ($size === 0) {
+            $validation['valid'] = false;
+            $validation['errors'][] = 'Backup file is empty';
+        }
+
+        if ($size < 1024) {
+            $validation['warnings'][] = 'Backup file is very small, may be incomplete';
+        }
+
+        return $validation;
+    }
+
+    /**
+     * Export backup configuration
+     */
+    public function exportBackupConfiguration(): array
+    {
+        return [
+            'backup_path' => $this->config['backup_path'],
+            'retention_days' => $this->config['retention_days'],
+            'compression_enabled' => $this->config['compression_enabled'] ?? false,
+            'encryption_enabled' => $this->config['encryption_enabled'] ?? false,
+            'schedule' => $this->getBackupSchedule()
+        ];
+    }
+
+    /**
+     * Get last backup time
+     */
+    private function getLastBackupTime(): ?string
+    {
+        $result = $this->db->fetchRow(
+            "SELECT MAX(created_at) as last_backup FROM database_backups"
+        );
+
+        return $result['last_backup'] ?? null;
+    }
 }

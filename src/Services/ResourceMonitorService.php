@@ -786,7 +786,7 @@ class ResourceMonitorService
     /**
      * Force throttling activation (for testing or manual intervention)
      */
-    public function forceThrottling(int $duration = null): array
+    public function forceThrottling(?int $duration = null): array
     {
         $duration = $duration ?: $this->config['throttle_duration'];
 

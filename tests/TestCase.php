@@ -48,30 +48,30 @@ abstract class TestCase extends BaseTestCase
             // Disable foreign key checks
             $this->database->execute('SET FOREIGN_KEY_CHECKS = 0');
 
-            // Clean tables in proper order to avoid foreign key issues
-            $tablesToClean = [
-                'notifications',
-                'test_results',
-                'test_executions',
-                'test_websites',
-                'database_backups',
-                'notification_templates',
-                'notification_preferences',
-                'queue_jobs',
-                'metrics',
-                'escalations'
-            ];
+            // Clean tables but preserve persistent test data (website IDs 1, 2, 999999)
+            try {
+                // Clean tables without foreign key dependencies first
+                $this->database->execute("DELETE FROM backup_log WHERE id > 0");
+                $this->database->execute("DELETE FROM notifications WHERE website_id NOT IN (1, 2, 999999)");
+                $this->database->execute("DELETE FROM alert_escalations WHERE website_id NOT IN (1, 2, 999999)");
+                $this->database->execute("DELETE FROM scan_metrics WHERE website_id NOT IN (1, 2, 999999)");
+                $this->database->execute("DELETE FROM scan_results WHERE website_id NOT IN (1, 2, 999999)");
+                $this->database->execute("DELETE FROM database_backups WHERE id > 0");
 
-            foreach ($tablesToClean as $table) {
-                try {
-                    // Use DELETE instead of TRUNCATE to avoid foreign key issues
-                    $this->database->execute("DELETE FROM `{$table}` WHERE 1=1");
-                    // Reset auto increment if table exists
-                    $this->database->execute("ALTER TABLE `{$table}` AUTO_INCREMENT = 1");
-                } catch (\Exception $e) {
-                    // Table might not exist or other issues, continue
-                    error_log("Warning: Could not clean table {$table}: " . $e->getMessage());
-                }
+                // Clean job queue (not tied to websites)
+                $this->database->execute("DELETE FROM job_queue WHERE id > 0");
+                $this->database->execute("DELETE FROM queue_log WHERE id > 0");
+
+                // Clean test executions and results
+                $this->database->execute("DELETE FROM test_results WHERE execution_id NOT IN (SELECT id FROM test_executions WHERE website_id IN (1, 2, 999999))");
+                $this->database->execute("DELETE FROM test_executions WHERE website_id NOT IN (1, 2, 999999)");
+
+                // Clean websites (but keep persistent ones)
+                $this->database->execute("DELETE FROM websites WHERE id NOT IN (1, 2, 999999)");
+                $this->database->execute("DELETE FROM website_test_config WHERE website_id NOT IN (1, 2, 999999)");
+            } catch (\Exception $e) {
+                // Log error but continue
+                error_log("Warning: Could not clean some tables: " . $e->getMessage());
             }
 
             // Re-enable foreign key checks

@@ -638,7 +638,7 @@ class NotificationService
 
         if (isset($scanResult['results'])) {
             foreach ($scanResult['results'] as $result) {
-                if (!$result['success']) {
+                if (!($result['success'] ?? true)) {
                     $failedTests[] = [
                         'test_name' => $result['test_name'] ?? 'Unknown',
                         'error_message' => $result['error_message'] ?? 'Test failed',
@@ -830,5 +830,238 @@ class NotificationService
         }
 
         return $this->providers[$providerType]->test();
+    }
+
+    /**
+     * Get notification by ID
+     */
+    public function getNotificationById(int $notificationId): ?array
+    {
+        return $this->database->fetchRow(
+            "SELECT * FROM notifications WHERE id = ?",
+            [$notificationId]
+        );
+    }
+
+    /**
+     * Get notification history
+     */
+    public function getNotificationHistory(?int $websiteId = null, array $filters = []): array
+    {
+        $whereConditions = [];
+        $params = [];
+
+        if ($websiteId) {
+            $whereConditions[] = "website_id = ?";
+            $params[] = $websiteId;
+        }
+
+        if (isset($filters['type'])) {
+            $whereConditions[] = "type = ?";
+            $params[] = $filters['type'];
+        }
+
+        if (isset($filters['status'])) {
+            $whereConditions[] = "status = ?";
+            $params[] = $filters['status'];
+        }
+
+        if (isset($filters['from_date'])) {
+            $whereConditions[] = "created_at >= ?";
+            $params[] = $filters['from_date'];
+        }
+
+        if (isset($filters['to_date'])) {
+            $whereConditions[] = "created_at <= ?";
+            $params[] = $filters['to_date'];
+        }
+
+        $whereClause = empty($whereConditions) ? "" : "WHERE " . implode(" AND ", $whereConditions);
+        $limit = $filters['limit'] ?? 100;
+
+        return $this->database->fetchAll(
+            "SELECT * FROM notifications {$whereClause} ORDER BY created_at DESC LIMIT {$limit}",
+            $params
+        );
+    }
+
+    /**
+     * Retry failed notification
+     */
+    public function retryFailedNotification(int $notificationId): array
+    {
+        $notification = $this->getNotificationById($notificationId);
+
+        if (!$notification || $notification['status'] !== 'failed') {
+            return ['success' => false, 'error' => 'Notification not found or not failed'];
+        }
+
+        $message = json_decode($notification['message'], true) ?? [];
+        $type = $notification['type'];
+        $recipient = $notification['recipient'];
+
+        return $this->sendNotification($type, $recipient, $message);
+    }
+
+    /**
+     * Get notification preferences
+     */
+    public function getNotificationPreferences(int $websiteId): array
+    {
+        $preferences = $this->database->fetchRow(
+            "SELECT notification_preferences FROM websites WHERE id = ?",
+            [$websiteId]
+        );
+
+        if (!$preferences || !$preferences['notification_preferences']) {
+            return $this->getDefaultPreferences();
+        }
+
+        return json_decode($preferences['notification_preferences'], true) ?? $this->getDefaultPreferences();
+    }
+
+    /**
+     * Update notification preferences
+     */
+    public function updateNotificationPreferences(int $websiteId, array $preferences): bool
+    {
+        return $this->database->update(
+            'websites',
+            ['notification_preferences' => json_encode($preferences)],
+            ['id' => $websiteId]
+        );
+    }
+
+    /**
+     * Get default notification preferences
+     */
+    private function getDefaultPreferences(): array
+    {
+        return [
+            'email_enabled' => true,
+            'sms_enabled' => false,
+            'webhook_enabled' => false,
+            'notify_on_failure' => true,
+            'notify_on_recovery' => true,
+            'notify_on_warning' => false
+        ];
+    }
+
+    /**
+     * Send custom notification
+     */
+    public function sendCustomNotification($recipientsOrType, $templateOrRecipient = null, $contextOrSubject = null, $message = null, array $metadata = []): array
+    {
+        // Handle array of recipients (new signature)
+        if (is_array($recipientsOrType)) {
+            $recipients = $recipientsOrType;
+            $template = $templateOrRecipient;
+            $context = $contextOrSubject ?? [];
+
+            $sent = 0;
+            $failed = 0;
+
+            foreach ($recipients as $recipient) {
+                $renderedMessage = $this->renderTemplate($template, $context);
+                $result = $this->sendNotification('email', $recipient, [
+                    'subject' => 'Custom Notification',
+                    'message' => $renderedMessage,
+                    'metadata' => $context
+                ]);
+
+                if ($result['success']) {
+                    $sent++;
+                } else {
+                    $failed++;
+                }
+            }
+
+            return [
+                'success' => $failed === 0,
+                'sent_count' => $sent,
+                'failed_count' => $failed
+            ];
+        }
+
+        // Handle old signature (type, recipient, subject, message, metadata)
+        $notificationMessage = [
+            'subject' => $contextOrSubject,
+            'message' => $message,
+            'metadata' => $metadata
+        ];
+
+        return $this->sendNotification($recipientsOrType, $templateOrRecipient, $notificationMessage);
+    }
+
+    /**
+     * Validate email address
+     */
+    public function validateEmailAddress(string $email): bool
+    {
+        return filter_var($email, FILTER_VALIDATE_EMAIL) !== false;
+    }
+
+    /**
+     * Validate phone number (basic validation)
+     */
+    public function validatePhoneNumber(string $phone): bool
+    {
+        $cleaned = preg_replace('/[^0-9+]/', '', $phone);
+        return strlen($cleaned) >= 10 && strlen($cleaned) <= 15;
+    }
+
+    /**
+     * Validate webhook URL
+     */
+    public function validateWebhookUrl(string $url): bool
+    {
+        if (!filter_var($url, FILTER_VALIDATE_URL)) {
+            return false;
+        }
+
+        $parsed = parse_url($url);
+        return isset($parsed['scheme']) && in_array($parsed['scheme'], ['http', 'https']);
+    }
+
+    /**
+     * Render notification template
+     */
+    public function renderTemplate(string $template, array $variables): string
+    {
+        $rendered = $template;
+
+        foreach ($variables as $key => $value) {
+            $placeholder = '{{' . $key . '}}';
+            $rendered = str_replace($placeholder, (string) $value, $rendered);
+        }
+
+        return $rendered;
+    }
+
+    /**
+     * Cleanup old notifications
+     */
+    public function cleanupOldNotifications(int $days = 30): array
+    {
+        try {
+            $cutoffDate = date('Y-m-d H:i:s', strtotime("-{$days} days"));
+
+            $deleted = $this->db->execute(
+                "DELETE FROM notifications WHERE created_at < ?",
+                [$cutoffDate]
+            );
+
+            return [
+                'success' => true,
+                'deleted_count' => $deleted,
+                'cutoff_date' => $cutoffDate
+            ];
+        } catch (\Exception $e) {
+            return [
+                'success' => false,
+                'error' => $e->getMessage(),
+                'deleted_count' => 0
+            ];
+        }
     }
 }

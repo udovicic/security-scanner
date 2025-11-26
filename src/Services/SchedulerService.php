@@ -963,4 +963,315 @@ class SchedulerService
             'websites_due_now' => count($this->getWebsitesDueForScanning())
         ];
     }
+
+    /**
+     * Schedule scan for a specific website
+     */
+    public function scheduleScanForWebsite(int $websiteId, ?string $scanTime = null): array
+    {
+        $website = $this->db->fetchRow("SELECT * FROM websites WHERE id = ?", [$websiteId]);
+
+        if (!$website) {
+            return ['success' => false, 'error' => 'Website not found'];
+        }
+
+        $nextScanAt = $scanTime ?? date('Y-m-d H:i:s');
+
+        $this->db->update('websites', ['next_scan_at' => $nextScanAt], ['id' => $websiteId]);
+
+        return [
+            'success' => true,
+            'website_id' => $websiteId,
+            'scheduled_at' => $nextScanAt
+        ];
+    }
+
+    /**
+     * Schedule bulk scans for multiple websites
+     */
+    public function scheduleBulkScans(array $websiteIds, ?string $scanTime = null): array
+    {
+        $scheduled = 0;
+        $failed = 0;
+
+        foreach ($websiteIds as $websiteId) {
+            $result = $this->scheduleScanForWebsite($websiteId, $scanTime);
+            if ($result['success']) {
+                $scheduled++;
+            } else {
+                $failed++;
+            }
+        }
+
+        return [
+            'success' => true,
+            'scheduled' => $scheduled,
+            'failed' => $failed
+        ];
+    }
+
+    /**
+     * Execute scheduled scans
+     */
+    public function executeScheduledScans(): array
+    {
+        return $this->run();
+    }
+
+    /**
+     * Cancel a scheduled execution
+     */
+    public function cancelScheduledExecution(int $executionId): bool
+    {
+        return $this->db->update(
+            'test_executions',
+            ['status' => 'cancelled', 'updated_at' => date('Y-m-d H:i:s')],
+            ['id' => $executionId, 'status' => 'scheduled']
+        );
+    }
+
+    /**
+     * Get websites due for scan (alias for existing method)
+     */
+    public function getWebsitesDueForScan(): array
+    {
+        return $this->getWebsitesDueForScanning();
+    }
+
+    /**
+     * Get currently running executions
+     */
+    public function getRunningExecutions(): array
+    {
+        return $this->db->fetchAll(
+            "SELECT te.*, w.name as website_name, w.url as website_url
+             FROM test_executions te
+             JOIN websites w ON te.website_id = w.id
+             WHERE te.status = 'running'
+             ORDER BY te.started_at DESC"
+        );
+    }
+
+    /**
+     * Get execution queue
+     */
+    public function getExecutionQueue(int $limit = 100): array
+    {
+        return $this->db->fetchAll(
+            "SELECT te.*, w.name as website_name, w.url as website_url
+             FROM test_executions te
+             JOIN websites w ON te.website_id = w.id
+             WHERE te.status IN ('scheduled', 'pending', 'queued')
+             ORDER BY
+                CASE
+                    WHEN te.status = 'scheduled' THEN 1
+                    WHEN te.status = 'pending' THEN 2
+                    ELSE 3
+                END,
+                te.created_at ASC
+             LIMIT ?",
+            [$limit]
+        );
+    }
+
+    /**
+     * Get scheduler status
+     */
+    public function getSchedulerStatus(): array
+    {
+        $lockStatus = $this->dbLock->isLocked($this->lockName);
+
+        return [
+            'is_running' => $lockStatus,
+            'running_executions' => count($this->getRunningExecutions()),
+            'queued_executions' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM test_executions WHERE status IN ('scheduled', 'pending', 'queued')"
+            ),
+            'last_run' => $this->db->fetchColumn(
+                "SELECT MAX(created_at) FROM test_executions"
+            )
+        ];
+    }
+
+    /**
+     * Pause scheduler
+     */
+    public function pauseScheduler(): bool
+    {
+        return $this->dbLock->acquire('scheduler_paused', 86400);
+    }
+
+    /**
+     * Resume scheduler (release pause lock)
+     */
+    public function resumeScheduler(): bool
+    {
+        return $this->dbLock->release('scheduler_paused');
+    }
+
+    /**
+     * Cleanup old executions
+     */
+    public function cleanupOldExecutions(int $daysToKeep = 30): int
+    {
+        $cutoffDate = date('Y-m-d H:i:s', strtotime("-{$daysToKeep} days"));
+
+        return $this->db->execute(
+            "DELETE FROM test_executions
+             WHERE status IN ('completed', 'failed', 'cancelled')
+             AND created_at < ?",
+            [$cutoffDate]
+        );
+    }
+
+    /**
+     * Check for stuck executions
+     */
+    public function checkForStuckExecutions(): array
+    {
+        $stuckExecutions = $this->db->fetchAll(
+            "SELECT * FROM test_executions
+             WHERE status = 'running'
+             AND started_at < DATE_SUB(NOW(), INTERVAL ? SECOND)",
+            [$this->config['max_execution_time']]
+        );
+
+        foreach ($stuckExecutions as $execution) {
+            $this->db->update(
+                'test_executions',
+                ['status' => 'failed', 'error_message' => 'Execution timeout', 'updated_at' => date('Y-m-d H:i:s')],
+                ['id' => $execution['id']]
+            );
+        }
+
+        return $stuckExecutions;
+    }
+
+    /**
+     * Get scheduler health status
+     */
+    public function getSchedulerHealth(): array
+    {
+        $stuckCount = count($this->checkForStuckExecutions());
+        $runningCount = count($this->getRunningExecutions());
+        $queuedCount = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_executions WHERE status IN ('scheduled', 'pending', 'queued')"
+        );
+
+        $health = 'healthy';
+        if ($stuckCount > 0) {
+            $health = 'degraded';
+        }
+        if ($stuckCount > 5 || $queuedCount > 100) {
+            $health = 'unhealthy';
+        }
+
+        return [
+            'status' => $health,
+            'running_count' => $runningCount,
+            'queued_count' => $queuedCount,
+            'stuck_count' => $stuckCount,
+            'max_concurrent' => $this->config['max_concurrent_executions']
+        ];
+    }
+
+    /**
+     * Get performance metrics
+     */
+    public function getPerformanceMetrics(int $days = 7): array
+    {
+        return [
+            'avg_execution_time' => $this->db->fetchColumn(
+                "SELECT AVG(execution_time) FROM test_executions
+                 WHERE execution_time IS NOT NULL AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            ),
+            'total_executions' => $this->db->fetchColumn(
+                "SELECT COUNT(*) FROM test_executions WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            ),
+            'success_rate' => $this->db->fetchColumn(
+                "SELECT AVG(CASE WHEN status = 'completed' THEN 100 ELSE 0 END)
+                 FROM test_executions WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+                [$days]
+            )
+        ];
+    }
+
+    /**
+     * Optimize scan schedule
+     */
+    public function optimizeScanSchedule(): array
+    {
+        $websites = $this->db->fetchAll(
+            "SELECT w.*, COUNT(te.id) as failure_count
+             FROM websites w
+             LEFT JOIN test_executions te ON w.id = te.website_id
+                AND te.status = 'failed'
+                AND te.created_at >= DATE_SUB(NOW(), INTERVAL 7 DAY)
+             WHERE w.status = 'active'
+             GROUP BY w.id"
+        );
+
+        $optimized = 0;
+        foreach ($websites as $website) {
+            if ($website['failure_count'] > 5) {
+                $this->db->update('websites', ['priority' => 'high'], ['id' => $website['id']]);
+                $optimized++;
+            }
+        }
+
+        return [
+            'success' => true,
+            'optimized_count' => $optimized
+        ];
+    }
+
+    /**
+     * Set scheduler configuration
+     */
+    public function setSchedulerConfiguration(array $config): bool
+    {
+        $this->config = array_merge($this->config, $config);
+        return true;
+    }
+
+    /**
+     * Estimate scan completion time
+     */
+    public function estimateScanCompletionTime($websiteIdOrIds): array
+    {
+        // Handle array of website IDs
+        if (is_array($websiteIdOrIds)) {
+            $totalTime = 0;
+            foreach ($websiteIdOrIds as $websiteId) {
+                $avgTime = $this->db->fetchColumn(
+                    "SELECT AVG(execution_time) FROM test_executions
+                     WHERE website_id = ? AND execution_time IS NOT NULL AND status = 'completed'
+                     LIMIT 10",
+                    [$websiteId]
+                );
+                $totalTime += $avgTime ? (int) $avgTime : 60; // Default 60 seconds if no history
+            }
+
+            return [
+                'estimated_duration_seconds' => $totalTime,
+                'estimated_completion_time' => date('Y-m-d H:i:s', time() + $totalTime),
+                'website_count' => count($websiteIdOrIds)
+            ];
+        }
+
+        // Handle single website ID
+        $avgTime = $this->db->fetchColumn(
+            "SELECT AVG(execution_time) FROM test_executions
+             WHERE website_id = ? AND execution_time IS NOT NULL AND status = 'completed'
+             LIMIT 10",
+            [$websiteIdOrIds]
+        );
+
+        return [
+            'estimated_duration_seconds' => $avgTime ? (int) $avgTime : 60,
+            'estimated_completion_time' => date('Y-m-d H:i:s', time() + ($avgTime ?: 60))
+        ];
+    }
 }

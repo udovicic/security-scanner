@@ -533,4 +533,12 @@ class TestResult
 
         return $this;
     }
+
+    /**
+     * Check if test was successful
+     */
+    public function isSuccess(): bool
+    {
+        return $this->status === self::STATUS_PASS;
+    }
 }

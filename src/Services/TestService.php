@@ -246,7 +246,7 @@ class TestService
             $attempts++;
 
             try {
-                $result = $this->testEngine->executeTest($testName, $target, $config, $timeout);
+                $result = $this->testEngine->executeTest($testName, $target, $config, ['timeout' => $timeout]);
 
                 if ($invertResult) {
                     $result = $result->invert();
@@ -530,5 +530,246 @@ class TestService
             'valid' => empty($errors),
             'errors' => $errors
         ];
+    }
+
+    /**
+     * Execute a specific test for a website
+     */
+    public function executeTestForWebsite(int $websiteId, string $testName, array $options = []): array
+    {
+        $website = $this->db->fetchRow("SELECT * FROM websites WHERE id = ?", [$websiteId]);
+
+        if (!$website) {
+            return ['success' => false, 'error' => 'Website not found'];
+        }
+
+        $testConfig = $this->getTestConfiguration($websiteId, $testName);
+        $config = $testConfig ? json_decode($testConfig['configuration'], true) : [];
+
+        $result = $this->executeTest($testName, $website['url'], $config, $options);
+
+        return [
+            'success' => $result->isSuccess(),
+            'test_name' => $testName,
+            'website_id' => $websiteId,
+            'result' => $result
+        ];
+    }
+
+    /**
+     * Execute all tests for a website
+     */
+    public function executeAllTestsForWebsite(int $websiteId, array $options = []): array
+    {
+        return $this->executeWebsiteTests($websiteId, [], $options);
+    }
+
+    /**
+     * Get test results by execution ID
+     */
+    public function getTestResultsByExecution(int $executionId): array
+    {
+        return $this->db->fetchAll(
+            "SELECT * FROM test_results WHERE execution_id = ? ORDER BY created_at DESC",
+            [$executionId]
+        );
+    }
+
+    /**
+     * Get test execution by ID
+     */
+    public function getTestExecutionById(int $executionId): ?array
+    {
+        return $this->db->fetchRow(
+            "SELECT te.*, w.name as website_name, w.url as website_url
+             FROM test_executions te
+             LEFT JOIN websites w ON te.website_id = w.id
+             WHERE te.id = ?",
+            [$executionId]
+        );
+    }
+
+    /**
+     * Cancel a test execution
+     */
+    public function cancelTestExecution(int $executionId): bool
+    {
+        $execution = $this->getTestExecutionById($executionId);
+
+        if (!$execution) {
+            return false;
+        }
+
+        if (!in_array($execution['status'], ['pending', 'scheduled', 'queued'])) {
+            return false;
+        }
+
+        return $this->db->update(
+            'test_executions',
+            ['status' => 'cancelled', 'updated_at' => date('Y-m-d H:i:s')],
+            ['id' => $executionId]
+        );
+    }
+
+    /**
+     * Retry a failed test
+     */
+    public function retryFailedTest(int $executionId): array
+    {
+        $execution = $this->getTestExecutionById($executionId);
+
+        if (!$execution || $execution['status'] !== 'failed') {
+            return ['success' => false, 'error' => 'Execution not found or not failed'];
+        }
+
+        return $this->executeTestForWebsite(
+            $execution['website_id'],
+            $execution['test_name']
+        );
+    }
+
+    /**
+     * Schedule a test execution
+     */
+    public function scheduleTestExecution(int $websiteId, string $testName, string $scheduledTime): array
+    {
+        $website = $this->db->fetchRow("SELECT * FROM websites WHERE id = ?", [$websiteId]);
+
+        if (!$website) {
+            return ['success' => false, 'error' => 'Website not found'];
+        }
+
+        $executionId = $this->db->insert('test_executions', [
+            'website_id' => $websiteId,
+            'test_name' => $testName,
+            'status' => 'scheduled',
+            'started_at' => $scheduledTime,
+            'created_at' => date('Y-m-d H:i:s'),
+            'updated_at' => date('Y-m-d H:i:s')
+        ]);
+
+        return [
+            'success' => true,
+            'execution_id' => $executionId,
+            'scheduled_at' => $scheduledTime
+        ];
+    }
+
+    /**
+     * Get test configurations for a website (alias)
+     */
+    public function getTestConfigurationsForWebsite(int $websiteId): array
+    {
+        return $this->getWebsiteTestConfigurations($websiteId);
+    }
+
+    /**
+     * Bulk enable/disable tests for a website
+     */
+    public function bulkEnableTests(int $websiteId, array $testNames): array
+    {
+        $enabled = 0;
+        $failed = 0;
+
+        foreach ($testNames as $testName) {
+            $result = $this->configureWebsiteTest($websiteId, $testName, ['enabled' => true]);
+            if ($result['success']) {
+                $enabled++;
+            } else {
+                $failed++;
+            }
+        }
+
+        return [
+            'success' => true,
+            'enabled_count' => $enabled,
+            'failed' => $failed
+        ];
+    }
+
+    /**
+     * Bulk disable tests for a website
+     */
+    public function bulkDisableTests(int $websiteId, array $testNames): array
+    {
+        $disabled = 0;
+        $failed = 0;
+
+        foreach ($testNames as $testName) {
+            $result = $this->configureWebsiteTest($websiteId, $testName, ['enabled' => false]);
+            if ($result['success']) {
+                $disabled++;
+            } else {
+                $failed++;
+            }
+        }
+
+        return [
+            'success' => true,
+            'disabled_count' => $disabled,
+            'failed' => $failed
+        ];
+    }
+
+    /**
+     * Get test execution metrics
+     */
+    public function getTestExecutionMetrics(int $websiteId = null, int $days = 30): array
+    {
+        $whereClause = "WHERE te.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+        $params = [$days];
+
+        if ($websiteId) {
+            $whereClause .= " AND te.website_id = ?";
+            $params[] = $websiteId;
+        }
+
+        $metrics = $this->db->fetchRow(
+            "SELECT
+                COUNT(*) as total_executions,
+                SUM(CASE WHEN te.status = 'completed' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN te.status = 'failed' THEN 1 ELSE 0 END) as failed,
+                SUM(CASE WHEN te.status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
+                AVG(te.execution_time) as avg_execution_time,
+                MIN(te.execution_time) as min_execution_time,
+                MAX(te.execution_time) as max_execution_time
+             FROM test_executions te
+             {$whereClause}",
+            $params
+        );
+
+        return $metrics ?: [];
+    }
+
+    /**
+     * Get test statistics
+     */
+    public function getTestStatistics(string $testName = null, int $days = 30): array
+    {
+        $whereClause = "WHERE te.created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)";
+        $params = [$days];
+
+        if ($testName) {
+            $whereClause .= " AND te.test_name = ?";
+            $params[] = $testName;
+        }
+
+        $stats = $this->db->fetchRow(
+            "SELECT
+                COUNT(*) as total_runs,
+                SUM(CASE WHEN te.status = 'completed' AND te.success = 1 THEN 1 ELSE 0 END) as successful_runs,
+                SUM(CASE WHEN te.status = 'failed' OR te.success = 0 THEN 1 ELSE 0 END) as failed_runs,
+                AVG(CASE WHEN te.status = 'completed' AND te.success = 1 THEN 100 ELSE 0 END) as success_rate,
+                AVG(te.execution_time) as avg_execution_time
+             FROM test_executions te
+             {$whereClause}",
+            $params
+        );
+
+        if ($testName) {
+            $stats['test_name'] = $testName;
+        }
+
+        return $stats ?: [];
     }
 }
