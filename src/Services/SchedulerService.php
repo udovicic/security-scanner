@@ -357,7 +357,7 @@ class SchedulerService
     /**
      * Update next scan time for a website
      */
-    private function updateNextScanTime(array $website, bool $scanSuccessful = true, int $retryCount = 0): void
+    public function updateNextScanTime(array $website, bool $scanSuccessful = true, int $retryCount = 0): void
     {
         $nextScanTime = $this->schedulerConfig->calculateNextScanTime($website, $scanSuccessful, $retryCount);
 

@@ -852,11 +852,21 @@ class MetricsService
             [$websiteId]
         );
 
+        // Calculate performance trend
+        $recentAvg = (float)$this->db->fetchColumn(
+            "SELECT AVG(tr.execution_time) FROM test_results tr
+             JOIN test_executions te ON tr.execution_id = te.id
+             WHERE te.website_id = ? AND tr.created_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)",
+            [$websiteId]
+        );
+        $performanceTrend = $avgExecutionTime > 0 ? (($recentAvg - $avgExecutionTime) / $avgExecutionTime) * 100 : 0;
+
         return [
             'average_execution_time' => round($avgExecutionTime, 2),
             'min_execution_time' => round($minExecutionTime, 2),
             'max_execution_time' => round($maxExecutionTime, 2),
-            'total_tests_run' => $totalTestsRun
+            'total_tests_run' => $totalTestsRun,
+            'performance_trend' => round($performanceTrend, 2)
         ];
     }
 
@@ -865,19 +875,31 @@ class MetricsService
      */
     public function getSecurityMetrics(int $days = 30): array
     {
+        $totalVulnerabilities = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        );
+        $criticalIssues = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results WHERE status = 'failed' AND severity = 'critical' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        );
+        $resolvedIssues = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results WHERE status = 'passed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        );
+
+        // Calculate security score (0-100, higher is better)
+        $totalTests = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM test_results WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        );
+        $securityScore = $totalTests > 0 ? round((($totalTests - $totalVulnerabilities) / $totalTests) * 100, 2) : 100;
+
         return [
-            'total_vulnerabilities' => $this->db->fetchColumn(
-                "SELECT COUNT(*) FROM test_results WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
-                [$days]
-            ),
-            'critical_issues' => $this->db->fetchColumn(
-                "SELECT COUNT(*) FROM test_results WHERE status = 'failed' AND severity = 'critical' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
-                [$days]
-            ),
-            'resolved_issues' => $this->db->fetchColumn(
-                "SELECT COUNT(*) FROM test_results WHERE status = 'passed' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
-                [$days]
-            )
+            'total_vulnerabilities' => $totalVulnerabilities,
+            'critical_issues' => $criticalIssues,
+            'resolved_issues' => $resolvedIssues,
+            'security_score' => $securityScore
         ];
     }
 
@@ -914,7 +936,7 @@ class MetricsService
         // Handle days parameter
         $days = is_int($daysOrStartDate) ? $daysOrStartDate : 30;
 
-        return $this->db->fetchAll(
+        $dailyMetrics = $this->db->fetchAll(
             "SELECT
                 DATE(created_at) as date,
                 COUNT(*) as total_scans,
@@ -927,6 +949,30 @@ class MetricsService
              ORDER BY date DESC",
             [$websiteId, $days]
         );
+
+        // Calculate trends
+        $trends = [
+            'improving' => 0,
+            'stable' => 0,
+            'declining' => 0
+        ];
+
+        if (count($dailyMetrics) >= 2) {
+            $recent = $dailyMetrics[0]['successful'] ?? 0;
+            $previous = $dailyMetrics[1]['successful'] ?? 0;
+            if ($recent > $previous) {
+                $trends['improving'] = 1;
+            } elseif ($recent < $previous) {
+                $trends['declining'] = 1;
+            } else {
+                $trends['stable'] = 1;
+            }
+        }
+
+        return [
+            'daily_metrics' => $dailyMetrics,
+            'trends' => $trends
+        ];
     }
 
     /**
@@ -934,7 +980,7 @@ class MetricsService
      */
     public function getTestFailureAnalysis(int $days = 7): array
     {
-        return $this->db->fetchAll(
+        $mostFailedTests = $this->db->fetchAll(
             "SELECT
                 test_name,
                 COUNT(*) as failure_count,
@@ -946,6 +992,11 @@ class MetricsService
              LIMIT 10",
             [$days]
         );
+
+        return [
+            'most_failed_tests' => $mostFailedTests,
+            'total_failures' => array_sum(array_column($mostFailedTests, 'failure_count'))
+        ];
     }
 
     /**
@@ -969,6 +1020,7 @@ class MetricsService
             'website_id' => $websiteId,
             'uptime_percentage' => round($uptime, 2),
             'total_scans' => $totalScans,
+            'total_checks' => $totalScans,
             'successful_scans' => $successfulScans,
             'failed_scans' => $totalScans - $successfulScans,
             'period_days' => $days
@@ -1029,6 +1081,11 @@ class MetricsService
      */
     public function getAlertMetrics(int $days = 7): array
     {
+        $criticalAlerts = $this->db->fetchColumn(
+            "SELECT COUNT(*) FROM alert_escalations WHERE severity = 'critical' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        );
+
         return [
             'total_alerts' => $this->db->fetchColumn(
                 "SELECT COUNT(*) FROM alert_escalations WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
@@ -1041,7 +1098,8 @@ class MetricsService
             'resolved_alerts' => $this->db->fetchColumn(
                 "SELECT COUNT(*) FROM alert_escalations WHERE status = 'resolved' AND created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
                 [$days]
-            )
+            ),
+            'critical_alerts' => $criticalAlerts
         ];
     }
 
@@ -1055,6 +1113,11 @@ class MetricsService
             [$days]
         );
 
+        $totalExecutionTime = $this->db->fetchColumn(
+            "SELECT COALESCE(SUM(execution_time), 0) FROM test_results WHERE created_at >= DATE_SUB(NOW(), INTERVAL ? DAY)",
+            [$days]
+        );
+
         $avgCostPerScan = 0.05;
         $totalCost = $totalScans * $avgCostPerScan;
 
@@ -1062,6 +1125,7 @@ class MetricsService
             'total_scans' => $totalScans,
             'cost_per_scan' => $avgCostPerScan,
             'total_cost' => $totalCost,
+            'total_execution_time' => round($totalExecutionTime, 2),
             'period_days' => $days
         ];
     }
@@ -1071,6 +1135,8 @@ class MetricsService
      */
     public function getRealTimeMetrics(): array
     {
+        $systemHealth = $this->calculateSystemHealthStatus();
+
         return [
             'active_scans' => $this->db->fetchColumn(
                 "SELECT COUNT(*) FROM scan_results WHERE status = 'running'"
@@ -1081,7 +1147,8 @@ class MetricsService
             'recent_failures' => $this->db->fetchColumn(
                 "SELECT COUNT(*) FROM scan_results WHERE status = 'failed' AND created_at >= DATE_SUB(NOW(), INTERVAL 1 HOUR)"
             ),
-            'system_health' => $this->calculateSystemHealthStatus()
+            'system_health' => $systemHealth,
+            'current_status' => $systemHealth
         ];
     }
 
@@ -1108,7 +1175,10 @@ class MetricsService
      */
     public function aggregateSystemMetrics(int $days = 7): array
     {
+        $totalWebsites = $this->db->fetchColumn("SELECT COUNT(*) FROM websites WHERE status = 'active'");
+
         return [
+            'total_websites' => $totalWebsites,
             'performance' => $this->getPerformanceMetrics($days),
             'security' => $this->getSecurityMetrics($days),
             'alerts' => $this->getAlertMetrics($days),
@@ -1122,6 +1192,7 @@ class MetricsService
     public function generateMetricsReport(int $days = 30): array
     {
         return [
+            'report_type' => 'system_metrics',
             'period' => [
                 'days' => $days,
                 'start_date' => date('Y-m-d', strtotime("-{$days} days")),

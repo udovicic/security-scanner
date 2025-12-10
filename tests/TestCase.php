@@ -53,6 +53,7 @@ abstract class TestCase extends BaseTestCase
                 // Clean tables without foreign key dependencies first
                 $this->database->execute("DELETE FROM backup_log WHERE id > 0");
                 $this->database->execute("DELETE FROM notifications WHERE website_id NOT IN (1, 2, 999999)");
+                $this->database->execute("DELETE FROM notification_preferences WHERE website_id NOT IN (1, 2, 999999)");
                 $this->database->execute("DELETE FROM alert_escalations WHERE website_id NOT IN (1, 2, 999999)");
                 $this->database->execute("DELETE FROM scan_metrics WHERE website_id NOT IN (1, 2, 999999)");
                 $this->database->execute("DELETE FROM scan_results WHERE website_id NOT IN (1, 2, 999999)");

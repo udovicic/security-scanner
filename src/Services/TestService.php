@@ -484,7 +484,7 @@ class TestService
     /**
      * Validate test-specific configuration
      */
-    private function validateTestConfiguration(array $config, array $schema): array
+    public function validateTestConfiguration(array $config, array $schema): array
     {
         $errors = [];
 

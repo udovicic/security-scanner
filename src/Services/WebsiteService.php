@@ -462,7 +462,7 @@ class WebsiteService
     /**
      * Normalize URL format
      */
-    private function normalizeUrl(string $url): string
+    public function normalizeUrl(string $url): string
     {
         $url = trim($url);
 
@@ -480,7 +480,7 @@ class WebsiteService
     /**
      * Validate URL accessibility
      */
-    private function validateUrlAccessibility(string $url): bool
+    public function validateUrlAccessibility(string $url): bool
     {
         $context = stream_context_create([
             'http' => [
@@ -508,7 +508,7 @@ class WebsiteService
     /**
      * Calculate next scan time based on frequency
      */
-    private function calculateNextScanTime(string $frequency): string
+    public function calculateNextScanTime(string $frequency): string
     {
         $now = new \DateTime();
 

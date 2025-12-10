@@ -153,9 +153,11 @@ function cleanupTestData(): void
 if (!function_exists('createTestWebsite')) {
     function createTestWebsite(array $attributes = []): array
     {
+        // Generate unique URL if not provided
+        $uniqueId = uniqid('', true);
         $defaults = [
             'name' => 'Test Website',
-            'url' => 'https://example.com',
+            'url' => 'https://example-' . $uniqueId . '.com',
             'status' => 'active',
             'created_at' => date('Y-m-d H:i:s'),
             'updated_at' => date('Y-m-d H:i:s')

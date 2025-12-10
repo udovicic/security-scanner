@@ -229,8 +229,12 @@ class NotificationPreferencesService
         return array_unique($recipients, SORT_REGULAR);
     }
 
-    public function updatePreference(int $preferenceId, array $updates): bool
+    public function updatePreference(?int $preferenceId, array $updates): bool
     {
+        if ($preferenceId === null) {
+            return false;
+        }
+
         $allowedFields = ['notification_channel', 'recipient', 'conditions', 'is_enabled'];
         $updateData = array_intersect_key($updates, array_flip($allowedFields));
 
@@ -252,8 +256,12 @@ class NotificationPreferencesService
         return $result;
     }
 
-    public function deletePreference(int $preferenceId): bool
+    public function deletePreference(?int $preferenceId): bool
     {
+        if ($preferenceId === null) {
+            return false;
+        }
+
         $preference = $this->db->fetchRow(
             "SELECT website_id, test_name, notification_type FROM notification_preferences WHERE id = ?",
             [$preferenceId]

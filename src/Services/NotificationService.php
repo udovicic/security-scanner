@@ -654,7 +654,7 @@ class NotificationService
     /**
      * Check rate limiting for email address
      */
-    private function checkRateLimit(string $email): bool
+    public function checkRateLimit(string $email): bool
     {
         $recentNotifications = $this->db->fetchColumn(
             "SELECT COUNT(*) FROM notifications
@@ -837,7 +837,7 @@ class NotificationService
      */
     public function getNotificationById(int $notificationId): ?array
     {
-        return $this->database->fetchRow(
+        return $this->db->fetchRow(
             "SELECT * FROM notifications WHERE id = ?",
             [$notificationId]
         );
@@ -879,7 +879,7 @@ class NotificationService
         $whereClause = empty($whereConditions) ? "" : "WHERE " . implode(" AND ", $whereConditions);
         $limit = $filters['limit'] ?? 100;
 
-        return $this->database->fetchAll(
+        return $this->db->fetchAll(
             "SELECT * FROM notifications {$whereClause} ORDER BY created_at DESC LIMIT {$limit}",
             $params
         );
@@ -908,7 +908,7 @@ class NotificationService
      */
     public function getNotificationPreferences(int $websiteId): array
     {
-        $preferences = $this->database->fetchRow(
+        $preferences = $this->db->fetchRow(
             "SELECT notification_preferences FROM websites WHERE id = ?",
             [$websiteId]
         );
@@ -925,7 +925,7 @@ class NotificationService
      */
     public function updateNotificationPreferences(int $websiteId, array $preferences): bool
     {
-        return $this->database->update(
+        return $this->db->update(
             'websites',
             ['notification_preferences' => json_encode($preferences)],
             ['id' => $websiteId]
@@ -945,6 +945,33 @@ class NotificationService
             'notify_on_recovery' => true,
             'notify_on_warning' => false
         ];
+    }
+
+    /**
+     * Determine if notification should be sent based on preferences
+     */
+    public function shouldSendNotification(int $websiteId, string $eventType): bool
+    {
+        $preferences = $this->getNotificationPreferences($websiteId);
+
+        // Check if notifications are globally enabled
+        if (!($preferences['email_enabled'] ?? false)) {
+            return false;
+        }
+
+        // Check event-specific preferences
+        switch ($eventType) {
+            case 'failure':
+            case 'error':
+                return $preferences['notify_on_failure'] ?? false;
+            case 'recovery':
+            case 'success':
+                return $preferences['notify_on_recovery'] ?? false;
+            case 'warning':
+                return $preferences['notify_on_warning'] ?? false;
+            default:
+                return true;
+        }
     }
 
     /**
@@ -1026,8 +1053,13 @@ class NotificationService
     /**
      * Render notification template
      */
-    public function renderTemplate(string $template, array $variables): string
+    public function renderTemplate(string|array $template, array $variables = []): string
     {
+        // Handle array template (extract 'template' key or use first string value)
+        if (is_array($template)) {
+            $template = $template['template'] ?? $template['message'] ?? reset($template) ?? '';
+        }
+
         $rendered = $template;
 
         foreach ($variables as $key => $value) {
@@ -1062,6 +1094,31 @@ class NotificationService
                 'error' => $e->getMessage(),
                 'deleted_count' => 0
             ];
+        }
+    }
+
+    /**
+     * Record notification sent (for tracking purposes)
+     */
+    public function recordNotificationSent(string $type, string $recipient, array $metadata = []): bool
+    {
+        try {
+            $this->db->insert('notifications', [
+                'type' => $type,
+                'recipient' => $recipient,
+                'status' => 'sent',
+                'metadata' => json_encode($metadata),
+                'created_at' => date('Y-m-d H:i:s'),
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+            return true;
+        } catch (\Exception $e) {
+            Logger::channel('notifications')->error('Failed to record notification', [
+                'type' => $type,
+                'recipient' => $recipient,
+                'error' => $e->getMessage()
+            ]);
+            return false;
         }
     }
 }

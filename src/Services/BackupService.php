@@ -102,6 +102,11 @@ class BackupService
 
             $result['execution_time'] = round(microtime(true) - $startTime, 3);
 
+            // Add backup_file alias for backward compatibility
+            if (isset($result['file_path'])) {
+                $result['backup_file'] = $result['file_path'];
+            }
+
             // Record backup in database
             $this->recordBackup($result);
 
@@ -742,8 +747,14 @@ class BackupService
     /**
      * Restore database backup (alias for restoreBackup)
      */
-    public function restoreDatabaseBackup(string $backupFile, array $options = []): array
+    public function restoreDatabaseBackup(?string $backupFile, array $options = []): array
     {
+        if ($backupFile === null) {
+            return [
+                'success' => false,
+                'error' => 'Backup file path cannot be null'
+            ];
+        }
         return $this->restoreBackup($backupFile, $options);
     }
 
@@ -857,8 +868,15 @@ class BackupService
     /**
      * Verify backup file integrity
      */
-    public function verifyBackupIntegrity(string $backupFile): array
+    public function verifyBackupIntegrity(?string $backupFile): array
     {
+        if ($backupFile === null) {
+            return [
+                'valid' => false,
+                'error' => 'Backup file path cannot be null'
+            ];
+        }
+
         $info = $this->getBackupInfo($backupFile);
 
         if (isset($info['error'])) {
@@ -881,8 +899,15 @@ class BackupService
     /**
      * Compress a backup file
      */
-    public function compressBackup(string $backupFile): array
+    public function compressBackup(?string $backupFile): array
     {
+        if ($backupFile === null) {
+            return [
+                'success' => false,
+                'error' => 'Backup file path cannot be null'
+            ];
+        }
+
         $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
 
         if (!file_exists($backupPath)) {
@@ -932,8 +957,15 @@ class BackupService
     /**
      * Decompress a backup file
      */
-    public function decompressBackup(string $compressedFile): array
+    public function decompressBackup(?string $compressedFile): array
     {
+        if ($compressedFile === null) {
+            return [
+                'success' => false,
+                'error' => 'Compressed file path cannot be null'
+            ];
+        }
+
         $compressedPath = $this->config['backup_path'] . '/' . basename($compressedFile);
 
         if (!file_exists($compressedPath)) {
@@ -1028,8 +1060,15 @@ class BackupService
     /**
      * Get a preview of what would be restored
      */
-    public function getRestorePreview(string $backupFile): array
+    public function getRestorePreview(?string $backupFile): array
     {
+        if ($backupFile === null) {
+            return [
+                'success' => false,
+                'error' => 'Backup file path cannot be null'
+            ];
+        }
+
         $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
 
         if (!file_exists($backupPath)) {
@@ -1054,8 +1093,16 @@ class BackupService
     /**
      * Validate a backup file
      */
-    public function validateBackupFile(string $backupFile): array
+    public function validateBackupFile(?string $backupFile): array
     {
+        if ($backupFile === null) {
+            return [
+                'valid' => false,
+                'errors' => ['Backup file path cannot be null'],
+                'warnings' => []
+            ];
+        }
+
         $backupPath = $this->config['backup_path'] . '/' . basename($backupFile);
 
         $validation = [
